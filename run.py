@@ -38,12 +38,21 @@ dp = Dispatcher()
 async def cmd_start(message: Message):
     """
     /start buyrug'iga javob.
-    Asosiy menyu klaviaturasini ko'rsatadi.
+    Bot imkoniyatlarini tushuntiradi.
     """
-    await message.answer(
+    welcome_text = (
         f"Assalomu alaykum, {message.from_user.full_name}!\n\n"
-        f"Quyidagi tugmalardan birini tanlang:",
-        reply_markup=main_menu_keyboard  # Reply keyboard qo'shamiz
+        "🤖 **Ushbu bot quyidagi imkoniyatlarga ega:**\n\n"
+        "📹 **Instagram Downloader:**\n"
+        "Instagram'dan video, reel yoki TV linkini yuboring va men uni sizga yuklab beraman.\n\n"
+        "🎵 **Musiqa qidiruv:**\n"
+        "Istalgan qo'shiq nomini yoki ijrochini yozing, men uni YouTube'dan topib, MP3 formatida yuboraman.\n\n"
+        "Shunchaki link yoki matn yuboring!"
+    )
+    await message.answer(
+        welcome_text,
+        reply_markup=main_menu_keyboard,
+        parse_mode="Markdown"
     )
 
 
@@ -118,175 +127,16 @@ async def cmd_remove(message: Message):
 # Shuning uchun F.text filteri orqali ushlaymiz
 
 
-@dp.message(F.text == 'Assalomu alaykum')
-async def cmd_assalom(message: Message):
-    await message.reply('Valeykum Assalom!')
-
-
-@dp.message(F.text == "Biz haqimizda")
-async def about_us(message: Message):
-    """'Biz haqimizda' tugmasi bosilganda"""
-    await message.answer(
-        "Biz - zamonaviy IT kompaniyamiz.\n"
-        "2020-yildan beri xizmat ko'rsatamiz."
+@dp.message(F.text == "ℹ️ Yordam")
+async def help_button_handler(message: Message):
+    """'Yordam' tugmasi bosilganda"""
+    help_text = (
+        "❓ **Qanday foydalanish kerak?**\n\n"
+        "1. **Instagram video:** Shunchaki linkni nusxalab botga yuboring.\n"
+        "2. **Musiqa:** Qo'shiq nomini yozib yuboring (masalan: *Janob Rasul - Gulyuzim*).\n\n"
+        "Bot avtomatik ravishda faylni yuklab beradi."
     )
-
-
-@dp.message(F.text == "Xizmatlar")
-async def services(message: Message):
-    """'Xizmatlar' tugmasi bosilganda"""
-    await message.answer(
-        "Bizning xizmatlarimiz:\n\n"
-        "1. Web dasturlash\n"
-        "2. Mobil ilovalar\n"
-        "3. Telegram botlar\n"
-        "4. IT konsalting"
-    )
-
-
-@dp.message(F.text == "Bog'lanish")
-async def contact_info(message: Message):
-    """'Bog'lanish' tugmasi bosilganda"""
-    await message.answer(
-        "Biz bilan bog'lanish:\n\n"
-        "Tel: +998 90 123 45 67\n"
-        "Email: info@example.com\n"
-        "Telegram: @example_support"
-    )
-
-
-@dp.message(F.text == "Sozlamalar")
-async def settings(message: Message):
-    """'Sozlamalar' tugmasi bosilganda"""
-    await message.answer(
-        "Sozlamalar bo'limi:",
-        reply_markup=settings_keyboard  # Yangi keyboard ko'rsatamiz
-    )
-
-
-@dp.message(F.text == "Orqaga")
-async def back_to_main(message: Message):
-    """'Orqaga' tugmasi bosilganda - asosiy menyuga qaytish"""
-    await message.answer(
-        "Asosiy menyu:",
-        reply_markup=main_menu_keyboard
-    )
-
-
-@dp.message(F.text == "Bekor qilish")
-async def cancel_action(message: Message):
-    """'Bekor qilish' tugmasi bosilganda"""
-    await message.answer(
-        "Amal bekor qilindi.\nAsosiy menyu:",
-        reply_markup=main_menu_keyboard
-    )
-
-
-
-# CALLBACK QUERY HANDLERS (Inline tugmalar uchun)
-
-# Inline tugma bosilganda callback_query keladi
-# Bu yerda callback_data orqali qaysi tugma bosilganini aniqlaymiz
-
-
-@dp.callback_query(F.data == "like")
-async def callback_like(callback: CallbackQuery):
-    """
-    'Like' inline tugmasi bosilganda.
-
-    callback.answer() - Telegram'ga "javob oldim" deb signal beradi
-    show_alert=True - Popup oyna chiqaradi
-    """
-    await callback.answer("Rahmat! Sizga yoqdi!", show_alert=True)
-
-    # Xabarni tahrirlash (ixtiyoriy)
-    await callback.message.edit_text(
-        "Siz Like bosdingiz!",
-        reply_markup=inline_menu  # Tugmalarni saqlab qolamiz
-    )
-
-
-@dp.callback_query(F.data == "dislike")
-async def callback_dislike(callback: CallbackQuery):
-    """'Dislike' inline tugmasi bosilganda"""
-    await callback.answer("Afsuski sizga yoqmadi")
-
-    await callback.message.edit_text(
-        "Siz Dislike bosdingiz",
-        reply_markup=inline_menu
-    )
-
-
-@dp.callback_query(F.data == "detail")
-async def callback_detail(callback: CallbackQuery):
-    """'Batafsil' inline tugmasi bosilganda"""
-    # callback.answer() - tez javob, kutish belgisini o'chiradi
-    await callback.answer()
-
-    # Batafsil ma'lumot bilan yangi xabar yuborish
-    await callback.message.answer(
-        "Batafsil ma'lumot:\n\n"
-        "Bu yerda to'liq ma'lumot bo'ladi..."
-    )
-
-
-@dp.callback_query(F.data == "back_to_menu")
-async def callback_back(callback: CallbackQuery):
-    """'Orqaga' inline tugmasi bosilganda"""
-    await callback.answer()
-    await callback.message.edit_text(
-        "Asosiy menyu:",
-        reply_markup=inline_menu
-    )
-
-
-@dp.callback_query(F.data == "plus")
-async def callback_plus(callback: CallbackQuery):
-    """'+' tugmasi bosilganda"""
-    await callback.answer("Miqdor oshirildi")
-
-
-@dp.callback_query(F.data == "minus")
-async def callback_minus(callback: CallbackQuery):
-    """'-' tugmasi bosilganda"""
-    await callback.answer("Miqdor kamaytirildi")
-
-
-@dp.callback_query(F.data == "add_to_cart")
-async def callback_add_cart(callback: CallbackQuery):
-    """'Savatga qo'shish' tugmasi bosilganda"""
-    await callback.answer("Mahsulot savatga qo'shildi!", show_alert=True)
-
-
-@dp.callback_query(F.data == "buy_now")
-async def callback_buy(callback: CallbackQuery):
-    """'Sotib olish' tugmasi bosilganda - tasdiqlash so'rash"""
-    await callback.answer()
-
-    # Tasdiqlash tugmalarini ko'rsatamiz
-    await callback.message.edit_text(
-        "Rostdan ham sotib olmoqchimisiz?",
-        reply_markup=create_confirm_keyboard("buy")
-    )
-
-
-@dp.callback_query(F.data == "confirm_buy")
-async def callback_confirm_buy(callback: CallbackQuery):
-    """Sotib olishni tasdiqlash"""
-    await callback.answer("Buyurtma qabul qilindi!", show_alert=True)
-    await callback.message.edit_text("Rahmat! Buyurtmangiz qabul qilindi.")
-
-
-@dp.callback_query(F.data == "cancel_buy")
-async def callback_cancel_buy(callback: CallbackQuery):
-    """Sotib olishni bekor qilish"""
-    await callback.answer("Bekor qilindi")
-    await callback.message.edit_text(
-        "Buyurtma bekor qilindi.\n\n"
-        "Mahsulot: iPhone 15 Pro\n"
-        "Narxi: $999",
-        reply_markup=product_keyboard
-    )
+    await message.answer(help_text, parse_mode="Markdown")
 
 
 

@@ -25,12 +25,10 @@ from aiogram.types import (
 # Eng sodda ko'rinish - bir qatorli tugmalar
 main_menu_keyboard = ReplyKeyboardMarkup(
     keyboard=[
-        # Har bir ichki list - bu bitta qator (row)
-        [KeyboardButton(text="Biz haqimizda"), KeyboardButton(text="Xizmatlar")],
-        [KeyboardButton(text="Bog'lanish"), KeyboardButton(text="Sozlamalar")],
+        [KeyboardButton(text="ℹ️ Yordam")],
     ],
-    resize_keyboard=True,  # Tugmalarni kichikroq qiladi (tavsiya etiladi)
-    input_field_placeholder="Tanlang..."  # Input maydonida ko'rinadigan matn
+    resize_keyboard=True,
+    input_field_placeholder="Link yuboring yoki qo'shiq qidiring..."
 )
 
 # --- 1.2 Bir ustunli (vertikal) Reply Keyboard ---

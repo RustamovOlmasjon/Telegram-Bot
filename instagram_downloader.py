@@ -48,61 +48,80 @@ async def download_instagram_content(url: str, output_dir: str = "downloads") ->
         # Papkani yaratish
         os.makedirs(output_dir, exist_ok=True)
         
-        # Video yuklab olish uchun sozlamalar
-        video_opts = {
+        # Umumiy sozlamalar (info olish uchun)
+        base_opts = {
+            'quiet': True,
+            'no_warnings': True,
             'format': 'best',
-            'outtmpl': os.path.join(output_dir, '%(id)s_video.%(ext)s'),
-            'quiet': True,
-            'no_warnings': True,
-        }
-        
-        # Audio yuklab olish uchun sozlamalar
-        audio_opts = {
-            'format': 'bestaudio/best',
-            'outtmpl': os.path.join(output_dir, '%(id)s_audio.%(ext)s'),
-            'postprocessors': [{
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'mp3',
-                'preferredquality': '192',
-            }],
-            'quiet': True,
-            'no_warnings': True,
         }
         
         video_path = None
         audio_path = None
         song_query = None
         
-        # Video yuklab olish va ma'lumotlarni olish
-        logger.info(f"Video yuklab olinmoqda: {url}")
-        with yt_dlp.YoutubeDL(video_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            video_filename = ydl.prepare_filename(info)
-            if os.path.exists(video_filename):
-                video_path = video_filename
-                logger.info(f"Video yuklandi: {video_path}")
+        # 1. Ma'lumotlarni bir marta olish
+        with yt_dlp.YoutubeDL(base_opts) as ydl:
+            logger.info(f"Instagram ma'lumotlari olinmoqda: {url}")
+            info = ydl.extract_info(url, download=False)
             
-            # Qo'shiq ma'lumotlarini chiqarish
+            # Debug uchun barcha mavjud kalitlarni chiqarish (logda)
+            logger.info(f"Mavjud metadata kalitlari: {list(info.keys())}")
+            
+            # Qo'shiq ma'lumotlarini qidirish
             track = info.get('track')
             artist = info.get('artist')
+            alt_title = info.get('alt_title')
+            description = info.get('description', '')
+            title = info.get('title', '')
+            
             if track and artist:
                 song_query = f"{artist} - {track}"
             elif track:
                 song_query = track
-            elif info.get('title') and "Instagram video" not in info.get('title'):
-                song_query = info.get('title')
-
-        # Audio yuklab olish
-        logger.info(f"Audio yuklab olinmoqda: {url}")
-        with yt_dlp.YoutubeDL(audio_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            # Audio fayl nomini topish (.mp3 kengaytmasi bilan)
-            base_filename = ydl.prepare_filename(info)
-            audio_filename = os.path.splitext(base_filename)[0] + '.mp3'
+            elif alt_title:
+                song_query = alt_title
             
-            if os.path.exists(audio_filename):
-                audio_path = audio_filename
-                logger.info(f"Audio yuklandi: {audio_path}")
+            # Agar hali ham topilmasa, description dan qidiramiz
+            if not song_query and description:
+                # Instagram descriptionda ko'pincha "Music: Artist - Song" ko'rinishida bo'ladi
+                music_match = re.search(r'(?:Music|Song|Musiqa):\s*([^\n|]+)', description, re.IGNORECASE)
+                if music_match:
+                    song_query = music_match.group(1).strip()
+            
+            # Oxirgi chora: title ni tekshirish (agar u generic bo'lmasa)
+            if not song_query and title and "Instagram" not in title and "video" not in title.lower():
+                song_query = title
+
+            logger.info(f"Topilgan metadata: track={track}, artist={artist}, query={song_query}")
+
+            # 2. Video yuklab olish
+            video_opts = {
+                **base_opts,
+                'outtmpl': os.path.join(output_dir, '%(id)s_video.%(ext)s'),
+            }
+            with yt_dlp.YoutubeDL(video_opts) as ydl_v:
+                ydl_v.download([url])
+                video_path = ydl_v.prepare_filename(info)
+                if not os.path.exists(video_path):
+                    video_path = None
+
+            # 3. Audio yuklab olish
+            audio_opts = {
+                **base_opts,
+                'format': 'bestaudio/best',
+                'outtmpl': os.path.join(output_dir, '%(id)s_audio.%(ext)s'),
+                'postprocessors': [{
+                    'key': 'FFmpegExtractAudio',
+                    'preferredcodec': 'mp3',
+                    'preferredquality': '192',
+                }],
+            }
+            with yt_dlp.YoutubeDL(audio_opts) as ydl_a:
+                ydl_a.download([url])
+                base_audio = ydl_a.prepare_filename(info)
+                audio_path = os.path.splitext(base_audio)[0] + '.mp3'
+                if not os.path.exists(audio_path):
+                    audio_path = None
         
         return video_path, audio_path, song_query
         

@@ -23,8 +23,8 @@ def is_instagram_url(url: str) -> bool:
         True agar Instagram link bo'lsa, aks holda False
     """
     instagram_patterns = [
-        r'https?://(?:www\.)?instagram\.com/(?:p|reel|tv)/[\w-]+/?',
-        r'https?://(?:www\.)?instagram\.com/[\w.-]+/(?:p|reel|tv)/[\w-]+/?',
+        r'https?://(?:www\.)?instagram\.com/(?:p|reel|reels|tv)/[\w-]+/?',
+        r'https?://(?:www\.)?instagram\.com/[\w.-]+/(?:p|reel|reels|tv)/[\w-]+/?',
     ]
     
     for pattern in instagram_patterns:
@@ -100,26 +100,33 @@ async def download_instagram_content(url: str, output_dir: str = "downloads") ->
                         song_query = match.group(1).strip()
                         break
             
-            # Agar hali ham yo'q bo'lsa, sarlavhani tozalaymiz
+            # Keraksiz generic nomlarni filtrlash
+            for forbidden in ["original audio", "original music", "originalniy zvuk", "asl audio"]:
+                if song_query and forbidden in song_query.lower():
+                    song_query = None
+                    break
+
+            # Sarlavhani tahlil qilish (Agar hali ham yo'q bo'lsa)
             if not song_query and title:
                 # Instagram video/reel yozuvlarini va keraksiz belgilarni olib tashlaymiz
-                clean_title = re.sub(r'Instagram (?:video|reel|post|TV).*', '', title, flags=re.IGNORECASE).strip()
-                clean_title = re.sub(r'#\w+|@\w+', '', clean_title).strip() # Hashtag va mentionlarni olib tashlash
-                if clean_title and len(clean_title) > 3:
+                clean_title = re.sub(r'Instagram (?:video|reel|reels|post|TV).*', '', title, flags=re.IGNORECASE).strip()
+                clean_title = re.sub(r'#\w+|@\w+|https?://\S+|www\.\S+', '', clean_title).strip() # Hashtag, mention va linklarni olib tashlash
+                if clean_title and len(clean_title) > 5:
                     song_query = clean_title
             
             # Teaglardan qidirish
             if not song_query and tags:
-                # Musiqaga oid teaglarni qidiramiz
                 music_tags = [t for t in tags if any(word in t.lower() for word in ['music', 'song', 'audio', 'cover'])]
                 if music_tags:
                     song_query = music_tags[0]
 
-            # Agar juda qisqa bo'lsa yoki topilmasa, uploader + title fallback
+            # Agar juda qisqa bo'lsa yoki topilmasa, uploader + title fallback (eng oxirgi chora)
             if not song_query and uploader:
-                 song_query = f"{uploader} video audio"
+                # Uploader nomidan ba'zi qismlarni olamiz
+                clean_uploader = re.sub(r'[\._]', ' ', uploader).strip()
+                song_query = f"{clean_uploader} yangi tarona"
 
-            logger.info(f"Topilgan metadata: track={track}, artist={artist}, query={song_query}")
+            logger.info(f"YUNALISH: track={track}, artist={artist}, query={song_query}")
 
             # 2. Video yuklab olish
             video_opts = {

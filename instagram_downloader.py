@@ -53,6 +53,7 @@ async def download_instagram_content(url: str, output_dir: str = "downloads") ->
             'quiet': True,
             'no_warnings': True,
             'format': 'best',
+            'ignoreerrors': True,
         }
         
         video_path = None
@@ -64,16 +65,20 @@ async def download_instagram_content(url: str, output_dir: str = "downloads") ->
             logger.info(f"Instagram ma'lumotlari olinmoqda: {url}")
             info = ydl.extract_info(url, download=False)
             
-            # Debug uchun barcha mavjud kalitlarni chiqarish (logda)
-            logger.info(f"Mavjud metadata kalitlari: {list(info.keys())}")
-            
-            # Qo'shiq ma'lumotlarini qidirish
+            if not info:
+                return None, None, None
+
+            # Qo'shiq ma'lumotlarini qidirish (Agressiv usul)
             track = info.get('track')
             artist = info.get('artist')
+            creator = info.get('creator')
+            uploader = info.get('uploader')
             alt_title = info.get('alt_title')
             description = info.get('description', '')
             title = info.get('title', '')
+            tags = info.get('tags', [])
             
+            # To'g'ridan-to'g'ri metadata bo'lsa (Eng ishonchli)
             if track and artist:
                 song_query = f"{artist} - {track}"
             elif track:
@@ -81,16 +86,38 @@ async def download_instagram_content(url: str, output_dir: str = "downloads") ->
             elif alt_title:
                 song_query = alt_title
             
-            # Agar hali ham topilmasa, description dan qidiramiz
+            # Tavsifdan regex orqali qidirish
             if not song_query and description:
-                # Instagram descriptionda ko'pincha "Music: Artist - Song" ko'rinishida bo'ladi
-                music_match = re.search(r'(?:Music|Song|Musiqa):\s*([^\n|]+)', description, re.IGNORECASE)
-                if music_match:
-                    song_query = music_match.group(1).strip()
+                patterns = [
+                    r'(?:Music|Song|Musiqa|Trek|Nomi):\s*([^\n|]+)',
+                    r'🎵\s*([^\n|]+)',
+                    r'🎧\s*([^\n|]+)',
+                    r'🎤\s*([^\n|]+)'
+                ]
+                for pattern in patterns:
+                    match = re.search(pattern, description, re.IGNORECASE)
+                    if match:
+                        song_query = match.group(1).strip()
+                        break
             
-            # Oxirgi chora: title ni tekshirish (agar u generic bo'lmasa)
-            if not song_query and title and "Instagram" not in title and "video" not in title.lower():
-                song_query = title
+            # Agar hali ham yo'q bo'lsa, sarlavhani tozalaymiz
+            if not song_query and title:
+                # Instagram video/reel yozuvlarini va keraksiz belgilarni olib tashlaymiz
+                clean_title = re.sub(r'Instagram (?:video|reel|post|TV).*', '', title, flags=re.IGNORECASE).strip()
+                clean_title = re.sub(r'#\w+|@\w+', '', clean_title).strip() # Hashtag va mentionlarni olib tashlash
+                if clean_title and len(clean_title) > 3:
+                    song_query = clean_title
+            
+            # Teaglardan qidirish
+            if not song_query and tags:
+                # Musiqaga oid teaglarni qidiramiz
+                music_tags = [t for t in tags if any(word in t.lower() for word in ['music', 'song', 'audio', 'cover'])]
+                if music_tags:
+                    song_query = music_tags[0]
+
+            # Agar juda qisqa bo'lsa yoki topilmasa, uploader + title fallback
+            if not song_query and uploader:
+                 song_query = f"{uploader} video audio"
 
             logger.info(f"Topilgan metadata: track={track}, artist={artist}, query={song_query}")
 
@@ -101,9 +128,17 @@ async def download_instagram_content(url: str, output_dir: str = "downloads") ->
             }
             with yt_dlp.YoutubeDL(video_opts) as ydl_v:
                 ydl_v.download([url])
-                video_path = ydl_v.prepare_filename(info)
-                if not os.path.exists(video_path):
-                    video_path = None
+                video_filename = ydl_v.prepare_filename(info)
+                if os.path.exists(video_filename):
+                    video_path = video_filename
+                else:
+                    # Kengaytmani tekshirish (.mp4, .mov, .mkv)
+                    actual_dir = os.path.dirname(video_filename)
+                    basename = os.path.splitext(os.path.basename(video_filename))[0]
+                    for f in os.listdir(actual_dir):
+                        if f.startswith(basename):
+                            video_path = os.path.join(actual_dir, f)
+                            break
 
             # 3. Audio yuklab olish
             audio_opts = {
@@ -132,7 +167,7 @@ async def download_instagram_content(url: str, output_dir: str = "downloads") ->
 
 async def download_youtube_audio(query: str, output_dir: str = "downloads") -> Optional[str]:
     """
-    YouTube'dan qidiruv bo'yicha eng mos audio faylni yuklab olish
+    YouTube'dan qidiruv bo'yicha eng mos TO'LIQ audio faylni yuklab olish
     
     Args:
         query: Qidiruv so'zi (qo'shiq nomi)
@@ -156,25 +191,33 @@ async def download_youtube_audio(query: str, output_dir: str = "downloads") -> O
             }],
             'quiet': True,
             'no_warnings': True,
-            'default_search': 'ytsearch1', # Faqat 1-natijani olish
+            'default_search': 'ytsearch1', # Eng yaxshi natijani olish
             'noplaylist': True,
+            # TO'LIQ VERSIONI topish uchun filtrlar
+            'match_filter': yt_dlp.utils.match_filter_func("duration > 60 & !is_live"),
+            'ignoreerrors': True,
         }
         
-        logger.info(f"YouTube'da qidirilmoqda: {query}")
+        logger.info(f"YouTube'da TO'LIQ audio qidirilmoqda: {query}")
         with yt_dlp.YoutubeDL(audio_opts) as ydl:
             # ytsearch: orqali qidirish
             info = ydl.extract_info(f"ytsearch:{query}", download=True)
             
-            if 'entries' in info and len(info['entries']) > 0:
-                # Birinchi natijani olish
+            if not info or 'entries' not in info or len(info['entries']) == 0:
+                # Agar 60s dan kattalari topilmasa, cheklovsiz qidirib ko'ramiz
+                logger.info(f"Yirik versiya topilmadi, cheklovsiz qidirilmoqda: {query}")
+                audio_opts.pop('match_filter', None)
+                with yt_dlp.YoutubeDL(audio_opts) as ydl_retry:
+                    info = ydl_retry.extract_info(f"ytsearch:{query}", download=True)
+
+            if info and 'entries' in info and len(info['entries']) > 0:
                 info = info['entries'][0]
+                base_filename = ydl.prepare_filename(info)
+                audio_filename = os.path.splitext(base_filename)[0] + '.mp3'
                 
-            base_filename = ydl.prepare_filename(info)
-            audio_filename = os.path.splitext(base_filename)[0] + '.mp3'
-            
-            if os.path.exists(audio_filename):
-                logger.info(f"YouTube'dan audio yuklandi: {audio_filename}")
-                return audio_filename
+                if os.path.exists(audio_filename):
+                    logger.info(f"YouTube'dan audio yuklandi: {audio_filename}")
+                    return audio_filename
                 
         return None
         

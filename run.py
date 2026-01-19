@@ -159,19 +159,25 @@ async def handle_text_messages(message: Message):
             # ORIGINAL VARIANT qidiruv (agar metadata topilgan bo'lsa)
             yt_original_path = None
             if song_query:
-                await status_msg.edit_text(f"🔍 '{song_query}' qo'shig'ining original varianti qidirilmoqda...")
-                yt_original_path = await download_youtube_audio(song_query)
+                await status_msg.edit_text(f"🔍 '{song_query}' qo'shig'ining to'liq versiyasini YouTube'dan qidiryapman...")
+                # Search queryni biroz kuchaytiramiz
+                enhanced_query = f"{song_query} original audio full"
+                yt_original_path = await download_youtube_audio(enhanced_query)
+                
+                # Agar topilmasa, yana bir marta oddiyroq qidirib ko'ramiz
+                if not yt_original_path:
+                    yt_original_path = await download_youtube_audio(song_query)
                 
                 if yt_original_path:
                     yt_size = get_file_size_mb(yt_original_path)
                     if yt_size <= MAX_SIZE_MB:
                         await message.answer_audio(
                             FSInputFile(yt_original_path),
-                            caption=f"🎧 '{song_query}' qo'shig'ining original varianti (YouTube dan)."
+                            caption=f"🎧 '{song_query}' qo'shig'ining original to'liq versiyasi (YouTube orqali)."
                         )
             
             # Muvaffaqiyatli xabar
-            await status_msg.edit_text("✅ Tayyor! Hammasi yuborildi.")
+            await status_msg.edit_text("✅ Tayyor! Sizga kerakli barcha fayllar yuborildi.")
             
             # Vaqtinchalik fayllarni o'chirish
             cleanup_files(video_path, audio_path, yt_original_path)
@@ -181,17 +187,23 @@ async def handle_text_messages(message: Message):
             await status_msg.edit_text("❌ Xatolik yuz berdi.")
             
     else:
-        # Agar menyu tugmalari bo'lmasa, uni qo'shiq nomi deb hisoblaymiz
+        # Menyu tugmalariga javob berishni to'xtatish
         excluded_texts = ["ℹ️ Yordam", "Biz haqimizda", "Xizmatlar", "Bog'lanish", "Sozlamalar", "Orqaga", "Bekor qilish", "Assalomu alaykum"]
         if text in excluded_texts:
             return
 
         # Qo'shiq qidirish
-        status_msg = await message.answer(f"🔍 '{text}' qidirilmoqda (original variant)...")
+        status_msg = await message.answer(f"🔍 '{text}' qidirilmoqda (to'liq versiya)...")
         
         try:
-            # YouTube'dan original audioni qidirib yuklash
-            audio_path = await download_youtube_audio(text)
+            # YouTube'dan original audioni qidirib yuklash (min 60s filtr bilan)
+            # Qidiruvni kuchaytirish
+            search_query = f"{text} official audio full"
+            audio_path = await download_youtube_audio(search_query)
+            
+            # Agar topilmasa, oddiyroq qidirib ko'ramiz
+            if not audio_path:
+                audio_path = await download_youtube_audio(text)
             
             if audio_path:
                 audio_size = get_file_size_mb(audio_path)
@@ -200,15 +212,15 @@ async def handle_text_messages(message: Message):
                 if audio_size > MAX_SIZE_MB:
                     await status_msg.edit_text(f"⚠️ Qo'shiq juda katta ({audio_size:.1f} MB).")
                 else:
-                    await status_msg.edit_text("🎵 Original audio topildi, yuborilmoqda...")
+                    await status_msg.edit_text("🎵 TO'LIQ audio topildi, yuborilmoqda...")
                     audio_file = FSInputFile(audio_path)
                     await message.answer_audio(
                         audio_file,
-                        caption=f"✅ '{text}' qo'shig'ining original varianti."
+                        caption=f"✅ '{text}' qo'shig'ining to'liq original varianti."
                     )
                     await status_msg.delete()
             else:
-                await status_msg.edit_text("❌ Afsuski, bu qo'shiqning original variantini topa olmadim.")
+                await status_msg.edit_text(f"❌ Afsuski, '{text}' bo'yicha hech qanday to'liq audio topilmadi.")
                 
             # Faylni tozalash
             cleanup_files(audio_path)

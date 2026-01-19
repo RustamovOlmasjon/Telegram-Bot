@@ -100,6 +100,59 @@ async def download_instagram_content(url: str, output_dir: str = "downloads") ->
         return None, None
 
 
+async def download_youtube_audio(query: str, output_dir: str = "downloads") -> Optional[str]:
+    """
+    YouTube'dan qidiruv bo'yicha eng mos audio faylni yuklab olish
+    
+    Args:
+        query: Qidiruv so'zi (qo'shiq nomi)
+        output_dir: Fayllarni saqlash uchun papka
+        
+    Returns:
+        Audio fayl yo'li yoki None xatolik bo'lsa
+    """
+    try:
+        # Papkani yaratish
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # Audio yuklab olish uchun sozlamalar
+        audio_opts = {
+            'format': 'bestaudio/best',
+            'outtmpl': os.path.join(output_dir, '%(id)s_yt.%(ext)s'),
+            'postprocessors': [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'mp3',
+                'preferredquality': '192',
+            }],
+            'quiet': True,
+            'no_warnings': True,
+            'default_search': 'ytsearch1', # Faqat 1-natijani olish
+            'noplaylist': True,
+        }
+        
+        logger.info(f"YouTube'da qidirilmoqda: {query}")
+        with yt_dlp.YoutubeDL(audio_opts) as ydl:
+            # ytsearch: orqali qidirish
+            info = ydl.extract_info(f"ytsearch:{query}", download=True)
+            
+            if 'entries' in info and len(info['entries']) > 0:
+                # Birinchi natijani olish
+                info = info['entries'][0]
+                
+            base_filename = ydl.prepare_filename(info)
+            audio_filename = os.path.splitext(base_filename)[0] + '.mp3'
+            
+            if os.path.exists(audio_filename):
+                logger.info(f"YouTube'dan audio yuklandi: {audio_filename}")
+                return audio_filename
+                
+        return None
+        
+    except Exception as e:
+        logger.error(f"YouTube yuklab olishda xatolik: {e}")
+        return None
+
+
 def cleanup_files(*file_paths: str) -> None:
     """
     Vaqtinchalik fayllarni o'chirish

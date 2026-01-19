@@ -1,0 +1,69 @@
+# Telegram Bot - Ishga Tushirish Qo'llanmasi
+
+## 1. Bot Token Olish
+
+1. Telegram'da `@BotFather` botiga boring
+2. `/newbot` buyrug'ini yuboring
+3. Bot nomini kiriting (masalan: "Mening Instagram Botim")
+4. Bot username'ini kiriting (masalan: "my_instagram_bot")
+5. BotFather sizga token beradi, masalan:
+   ```
+   1234567890:ABCdefGHIjklMNOpqrsTUVwxyz
+   ```
+
+## 2. Token'ni Sozlash
+
+1. `.env` faylini oching
+2. `YOUR_BOT_TOKEN_HERE` o'rniga BotFather'dan olgan tokenni yozing:
+   ```
+   BOT_TOKEN=1234567890:ABCdefGHIjklMNOpqrsTUVwxyz
+   ```
+3. Faylni saqlang
+
+## 3. Kutubxonalarni O'rnatish
+
+PowerShell yoki CMD da quyidagi buyruqni bajaring:
+
+```bash
+pip install -r requirements.txt
+```
+
+## 4. Botni Ishga Tushirish
+
+```bash
+python run.py
+```
+
+Agar hammasi to'g'ri bo'lsa, quyidagi xabar chiqadi:
+```
+INFO:aiogram.dispatcher:Start polling
+```
+
+## 5. Botni Sinab Ko'rish
+
+1. Telegram'da botingizni toping (username orqali)
+2. `/start` buyrug'ini yuboring
+3. Instagram link yuboring, masalan:
+   ```
+   https://www.instagram.com/reel/ABC123/
+   ```
+4. Bot video va audio yuboradi
+
+## Xatoliklar va Yechimlar
+
+### "BOT_TOKEN environment variable o'rnatilmagan!"
+- `.env` faylida `BOT_TOKEN` ni to'g'ri o'rnatganingizni tekshiring
+- Token'da bo'sh joylar yo'qligini tekshiring
+
+### "Token is invalid!"
+- BotFather'dan to'g'ri token olganingizni tekshiring
+- Token'ni to'liq ko'chirganingizni tekshiring
+
+### "ModuleNotFoundError"
+- `pip install -r requirements.txt` buyrug'ini bajaring
+
+## Qo'shimcha Ma'lumot
+
+- Bot Instagram video va audio yuklab oladi
+- Maksimal fayl hajmi: 50 MB (Telegram limiti)
+- Yuklab olingan fayllar avtomatik o'chiriladi

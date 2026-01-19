@@ -21,6 +21,7 @@ from keyboards import (
 from instagram_downloader import (
     is_instagram_url,
     download_instagram_content,
+    download_youtube_audio,
     cleanup_files,
     get_file_size_mb
 )
@@ -323,82 +324,111 @@ async def handle_location(message: Message):
 
 
 @dp.message(F.text)
-async def handle_instagram_link(message: Message):
+async def handle_text_messages(message: Message):
     """
-    Instagram linkini aniqlash va video/audio yuklab olish.
-    Foydalanuvchi Instagram link yuborganda ishga tushadi.
+    Instagram linki yoki qo'shiq qidirish uchun matnli xabarlarni qayta ishlash.
     """
     text = message.text
     
     # Instagram link ekanligini tekshirish
-    if not is_instagram_url(text):
-        # Agar Instagram link bo'lmasa, oddiy xabar deb qaytaramiz
-        return
-    
-    # Yuklab olish jarayoni boshlandi
-    status_msg = await message.answer("⏳ Instagram'dan yuklab olinmoqda...")
-    
-    try:
-        # Video va audio yuklab olish
-        video_path, audio_path = await download_instagram_content(text)
+    if is_instagram_url(text):
+        # Yuklab olish jarayoni boshlandi
+        status_msg = await message.answer("⏳ Instagram'dan yuklab olinmoqda...")
         
-        if not video_path and not audio_path:
-            await status_msg.edit_text(
-                "❌ Yuklab olishda xatolik yuz berdi.\n"
-                "Iltimos, linkni tekshiring va qayta urinib ko'ring."
-            )
+        try:
+            # Video va audio yuklab olish
+            video_path, audio_path = await download_instagram_content(text)
+            
+            if not video_path and not audio_path:
+                await status_msg.edit_text(
+                    "❌ Yuklab olishda xatolik yuz berdi.\n"
+                    "Iltimos, linkni tekshiring va qayta urinib ko'ring."
+                )
+                return
+            
+            # Fayl hajmlarini tekshirish (Telegram Bot API 100 MB limit)
+            MAX_SIZE_MB = 100
+            
+            # Video yuborish
+            if video_path:
+                video_size = get_file_size_mb(video_path)
+                
+                if video_size > MAX_SIZE_MB:
+                    await message.answer(
+                        f"⚠️ Video juda katta ({video_size:.1f} MB).\n"
+                        f"Telegram orqali yuborish uchun maksimal hajm {MAX_SIZE_MB} MB."
+                    )
+                else:
+                    await status_msg.edit_text("📹 Video yuborilmoqda...")
+                    video_file = FSInputFile(video_path)
+                    await message.answer_video(
+                        video_file,
+                        caption="✅ Instagram video"
+                    )
+            
+            # Audio yuborish
+            if audio_path:
+                audio_size = get_file_size_mb(audio_path)
+                
+                if audio_size > MAX_SIZE_MB:
+                    await message.answer(
+                        f"⚠️ Audio juda katta ({audio_size:.1f} MB).\n"
+                        f"Telegram orqali yuborish uchun maksimal hajm {MAX_SIZE_MB} MB."
+                    )
+                else:
+                    await status_msg.edit_text("🎵 Audio yuborilmoqda...")
+                    audio_file = FSInputFile(audio_path)
+                    await message.answer_audio(
+                        audio_file,
+                        caption="✅ Instagram audio (musiqa)"
+                    )
+            
+            # Muvaffaqiyatli xabar
+            await status_msg.edit_text("✅ Tayyor! Video va audio yuborildi.")
+            
+            # Vaqtinchalik fayllarni o'chirish
+            cleanup_files(video_path, audio_path)
+            
+        except Exception as e:
+            logger.error(f"Instagram handler xatolik: {e}")
+            await status_msg.edit_text("❌ Xatolik yuz berdi.")
+            
+    else:
+        # Agar menyu tugmalari bo'lmasa, uni qo'shiq nomi deb hisoblaymiz
+        excluded_texts = ["Biz haqimizda", "Xizmatlar", "Bog'lanish", "Sozlamalar", "Orqaga", "Bekor qilish", "Assalomu alaykum"]
+        if text in excluded_texts:
             return
+
+        # Qo'shiq qidirish
+        status_msg = await message.answer(f"🔍 '{text}' qidirilmoqda (original variant)...")
         
-        # Fayl hajmlarini tekshirish (Telegram 50 MB limit)
-        MAX_SIZE_MB = 50
-        
-        # Video yuborish
-        if video_path:
-            video_size = get_file_size_mb(video_path)
+        try:
+            # YouTube'dan original audioni qidirib yuklash
+            audio_path = await download_youtube_audio(text)
             
-            if video_size > MAX_SIZE_MB:
-                await message.answer(
-                    f"⚠️ Video juda katta ({video_size:.1f} MB).\n"
-                    f"Telegram orqali yuborish uchun maksimal hajm {MAX_SIZE_MB} MB."
-                )
+            if audio_path:
+                audio_size = get_file_size_mb(audio_path)
+                MAX_SIZE_MB = 100
+                
+                if audio_size > MAX_SIZE_MB:
+                    await status_msg.edit_text(f"⚠️ Qo'shiq juda katta ({audio_size:.1f} MB).")
+                else:
+                    await status_msg.edit_text("🎵 Original audio topildi, yuborilmoqda...")
+                    audio_file = FSInputFile(audio_path)
+                    await message.answer_audio(
+                        audio_file,
+                        caption=f"✅ '{text}' qo'shig'ining original varianti."
+                    )
+                    await status_msg.delete()
             else:
-                await status_msg.edit_text("📹 Video yuborilmoqda...")
-                video_file = FSInputFile(video_path)
-                await message.answer_video(
-                    video_file,
-                    caption="✅ Instagram video"
-                )
-        
-        # Audio yuborish
-        if audio_path:
-            audio_size = get_file_size_mb(audio_path)
+                await status_msg.edit_text("❌ Afsuski, bu qo'shiqning original variantini topa olmadim.")
+                
+            # Faylni tozalash
+            cleanup_files(audio_path)
             
-            if audio_size > MAX_SIZE_MB:
-                await message.answer(
-                    f"⚠️ Audio juda katta ({audio_size:.1f} MB).\n"
-                    f"Telegram orqali yuborish uchun maksimal hajm {MAX_SIZE_MB} MB."
-                )
-            else:
-                await status_msg.edit_text("🎵 Audio yuborilmoqda...")
-                audio_file = FSInputFile(audio_path)
-                await message.answer_audio(
-                    audio_file,
-                    caption="✅ Instagram audio (musiqa)"
-                )
-        
-        # Muvaffaqiyatli xabar
-        await status_msg.edit_text("✅ Tayyor! Video va audio yuborildi.")
-        
-    except Exception as e:
-        logger.error(f"Instagram handler xatolik: {e}")
-        await status_msg.edit_text(
-            "❌ Xatolik yuz berdi.\n"
-            "Iltimos, keyinroq qayta urinib ko'ring."
-        )
-    
-    finally:
-        # Vaqtinchalik fayllarni o'chirish
-        cleanup_files(video_path, audio_path)
+        except Exception as e:
+            logger.error(f"YouTube search handler xatolik: {e}")
+            await status_msg.edit_text("❌ Qidiruvda xatolik yuz berdi.")
 
 
 

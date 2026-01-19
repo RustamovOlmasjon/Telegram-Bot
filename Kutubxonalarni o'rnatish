@@ -1,0 +1,35 @@
+# Kutubxonalarni O'rnatish
+
+## Barcha Kutubxonalarni O'rnatish
+
+Quyidagi buyruqni bajaring:
+
+```bash
+pip install -r requirements.txt
+```
+
+## Alohida O'rnatish
+
+Agar yuqoridagi buyruq ishlamasa, quyidagi kutubxonalarni alohida o'rnating:
+
+```bash
+pip install aiogram==3.24.0
+pip install yt-dlp==2024.12.23
+pip install python-dotenv==1.2.1
+```
+
+## Kutubxonalar Ro'yxati
+
+- **aiogram** - Telegram bot yaratish uchun
+- **yt-dlp** - Instagram va YouTube'dan video yuklab olish uchun
+- **python-dotenv** - .env faylidan sozlamalarni yuklash uchun
+
+## Tekshirish
+
+O'rnatilganligini tekshirish uchun:
+
+```bash
+pip list
+```
+
+Ro'yxatda `aiogram`, `yt-dlp` va `python-dotenv` bo'lishi kerak.

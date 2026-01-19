@@ -8,13 +8,6 @@ from config import TOKEN
 # Keyboards faylidan klaviaturalarni import qilamiz
 from keyboards import (
     main_menu_keyboard,       # Asosiy menyu tugmalari
-    settings_keyboard,        # Sozlamalar tugmalari
-    contact_keyboard,         # Kontakt so'rash tugmalari
-    inline_menu,              # Inline tugmalar
-    links_keyboard,           # Havolalar tugmalari
-    product_keyboard,         # Mahsulot tugmalari
-    remove_keyboard,          # Klaviaturani olib tashlash
-    create_confirm_keyboard,  # Tasdiqlash tugmalarini yaratuvchi funksiya
 )
 
 # Instagram downloader modulini import qilamiz
@@ -28,6 +21,7 @@ from instagram_downloader import (
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
+logger = logging.getLogger(__name__)
 
 
 
@@ -65,59 +59,8 @@ async def cmd_salom(message: Message):
 async def cmd_help(message: Message):
     """
     /help buyrug'iga javob.
-    Inline tugmalar bilan yordam ko'rsatadi.
     """
-    await message.answer(
-        "Sizga qanday yordam kerak?\n\n"
-        "Quyidagi tugmalardan birini tanlang:",
-        reply_markup=links_keyboard  # Inline keyboard qo'shamiz
-    )
-
-
-@dp.message(Command('inline'))
-async def cmd_inline(message: Message):
-    """
-    /inline buyrug'i - Inline tugmalarni ko'rsatish uchun.
-    """
-    await message.answer(
-        "Bu xabarni baholang:",
-        reply_markup=inline_menu
-    )
-
-
-@dp.message(Command('product'))
-async def cmd_product(message: Message):
-    """
-    /product buyrug'i - Mahsulot tugmalarini ko'rsatish uchun.
-    """
-    await message.answer(
-        "Mahsulot: iPhone 15 Pro\n"
-        "Narxi: $999\n\n"
-        "Miqdorni tanlang:",
-        reply_markup=product_keyboard
-    )
-
-
-@dp.message(Command('contact'))
-async def cmd_contact(message: Message):
-    """
-    /contact buyrug'i - Kontakt so'rash tugmalarini ko'rsatish.
-    """
-    await message.answer(
-        "Iltimos, ma'lumotlaringizni yuboring:",
-        reply_markup=contact_keyboard
-    )
-
-
-@dp.message(Command('remove'))
-async def cmd_remove(message: Message):
-    """
-    /remove buyrug'i - Klaviaturani olib tashlash.
-    """
-    await message.answer(
-        "Klaviatura olib tashlandi.",
-        reply_markup=remove_keyboard
-    )
+    await help_button_handler(message)
 
 
 
@@ -186,8 +129,8 @@ async def handle_text_messages(message: Message):
         status_msg = await message.answer("⏳ Instagram'dan yuklab olinmoqda...")
         
         try:
-            # Video va audio yuklab olish
-            video_path, audio_path = await download_instagram_content(text)
+            # Video, audio va qo'shiq metadata yuklab olish
+            video_path, audio_path, song_query = await download_instagram_content(text)
             
             if not video_path and not audio_path:
                 await status_msg.edit_text(
@@ -202,42 +145,36 @@ async def handle_text_messages(message: Message):
             # Video yuborish
             if video_path:
                 video_size = get_file_size_mb(video_path)
-                
-                if video_size > MAX_SIZE_MB:
-                    await message.answer(
-                        f"⚠️ Video juda katta ({video_size:.1f} MB).\n"
-                        f"Telegram orqali yuborish uchun maksimal hajm {MAX_SIZE_MB} MB."
-                    )
-                else:
+                if video_size <= MAX_SIZE_MB:
                     await status_msg.edit_text("📹 Video yuborilmoqda...")
-                    video_file = FSInputFile(video_path)
-                    await message.answer_video(
-                        video_file,
-                        caption="✅ Instagram video"
-                    )
+                    await message.answer_video(FSInputFile(video_path), caption="✅ Instagram video")
             
-            # Audio yuborish
+            # Audio yuborish (Instagram'dan olingan variant)
             if audio_path:
                 audio_size = get_file_size_mb(audio_path)
-                
-                if audio_size > MAX_SIZE_MB:
-                    await message.answer(
-                        f"⚠️ Audio juda katta ({audio_size:.1f} MB).\n"
-                        f"Telegram orqali yuborish uchun maksimal hajm {MAX_SIZE_MB} MB."
-                    )
-                else:
+                if audio_size <= MAX_SIZE_MB:
                     await status_msg.edit_text("🎵 Audio yuborilmoqda...")
-                    audio_file = FSInputFile(audio_path)
-                    await message.answer_audio(
-                        audio_file,
-                        caption="✅ Instagram audio (musiqa)"
-                    )
+                    await message.answer_audio(FSInputFile(audio_path), caption="✅ Instagram audio")
+            
+            # ORIGINAL VARIANT qidiruv (agar metadata topilgan bo'lsa)
+            yt_original_path = None
+            if song_query:
+                await status_msg.edit_text(f"🔍 '{song_query}' qo'shig'ining original varianti qidirilmoqda...")
+                yt_original_path = await download_youtube_audio(song_query)
+                
+                if yt_original_path:
+                    yt_size = get_file_size_mb(yt_original_path)
+                    if yt_size <= MAX_SIZE_MB:
+                        await message.answer_audio(
+                            FSInputFile(yt_original_path),
+                            caption=f"🎧 '{song_query}' qo'shig'ining original varianti (YouTube dan)."
+                        )
             
             # Muvaffaqiyatli xabar
-            await status_msg.edit_text("✅ Tayyor! Video va audio yuborildi.")
+            await status_msg.edit_text("✅ Tayyor! Hammasi yuborildi.")
             
             # Vaqtinchalik fayllarni o'chirish
-            cleanup_files(video_path, audio_path)
+            cleanup_files(video_path, audio_path, yt_original_path)
             
         except Exception as e:
             logger.error(f"Instagram handler xatolik: {e}")
@@ -245,7 +182,7 @@ async def handle_text_messages(message: Message):
             
     else:
         # Agar menyu tugmalari bo'lmasa, uni qo'shiq nomi deb hisoblaymiz
-        excluded_texts = ["Biz haqimizda", "Xizmatlar", "Bog'lanish", "Sozlamalar", "Orqaga", "Bekor qilish", "Assalomu alaykum"]
+        excluded_texts = ["ℹ️ Yordam", "Biz haqimizda", "Xizmatlar", "Bog'lanish", "Sozlamalar", "Orqaga", "Bekor qilish", "Assalomu alaykum"]
         if text in excluded_texts:
             return
 

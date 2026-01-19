@@ -33,16 +33,16 @@ def is_instagram_url(url: str) -> bool:
     return False
 
 
-async def download_instagram_content(url: str, output_dir: str = "downloads") -> Tuple[Optional[str], Optional[str]]:
+async def download_instagram_content(url: str, output_dir: str = "downloads") -> Tuple[Optional[str], Optional[str], Optional[str]]:
     """
-    Instagram'dan video va audio yuklab olish
+    Instagram'dan video va audio yuklab olish + qo'shiq ma'lumotlarini olish
     
     Args:
         url: Instagram video URL
         output_dir: Fayllarni saqlash uchun papka
         
     Returns:
-        Tuple: (video_path, audio_path) yoki (None, None) xatolik bo'lsa
+        Tuple: (video_path, audio_path, song_query) yoki (None, None, None) xatolik bo'lsa
     """
     try:
         # Papkani yaratish
@@ -71,8 +71,9 @@ async def download_instagram_content(url: str, output_dir: str = "downloads") ->
         
         video_path = None
         audio_path = None
+        song_query = None
         
-        # Video yuklab olish
+        # Video yuklab olish va ma'lumotlarni olish
         logger.info(f"Video yuklab olinmoqda: {url}")
         with yt_dlp.YoutubeDL(video_opts) as ydl:
             info = ydl.extract_info(url, download=True)
@@ -80,7 +81,17 @@ async def download_instagram_content(url: str, output_dir: str = "downloads") ->
             if os.path.exists(video_filename):
                 video_path = video_filename
                 logger.info(f"Video yuklandi: {video_path}")
-        
+            
+            # Qo'shiq ma'lumotlarini chiqarish
+            track = info.get('track')
+            artist = info.get('artist')
+            if track and artist:
+                song_query = f"{artist} - {track}"
+            elif track:
+                song_query = track
+            elif info.get('title') and "Instagram video" not in info.get('title'):
+                song_query = info.get('title')
+
         # Audio yuklab olish
         logger.info(f"Audio yuklab olinmoqda: {url}")
         with yt_dlp.YoutubeDL(audio_opts) as ydl:
@@ -93,11 +104,11 @@ async def download_instagram_content(url: str, output_dir: str = "downloads") ->
                 audio_path = audio_filename
                 logger.info(f"Audio yuklandi: {audio_path}")
         
-        return video_path, audio_path
+        return video_path, audio_path, song_query
         
     except Exception as e:
         logger.error(f"Instagram yuklab olishda xatolik: {e}")
-        return None, None
+        return None, None, None
 
 
 async def download_youtube_audio(query: str, output_dir: str = "downloads") -> Optional[str]:

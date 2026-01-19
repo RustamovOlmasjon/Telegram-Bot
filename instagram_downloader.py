@@ -172,22 +172,21 @@ async def download_instagram_content(url: str, output_dir: str = "downloads") ->
         return None, None, None
 
 
-async def download_youtube_audio(query: str, output_dir: str = "downloads") -> Optional[str]:
+async def download_youtube_audio(query: str, output_dir: str = "downloads") -> Tuple[Optional[str], Optional[str], Optional[str]]:
     """
-    YouTube'dan qidiruv bo'yicha eng mos TO'LIQ audio faylni yuklab olish
+    YouTube'dan qidiruv bo'yicha eng mos audio faylni yuklab olish
     
     Args:
-        query: Qidiruv so'zi (qo'shiq nomi)
+        query: Qidiruv so'zi
         output_dir: Fayllarni saqlash uchun papka
         
     Returns:
-        Audio fayl yo'li yoki None xatolik bo'lsa
+        Tuple: (audio_path, title, artist) yoki (None, None, None)
     """
     try:
-        # Papkani yaratish
         os.makedirs(output_dir, exist_ok=True)
         
-        # Audio yuklab olish uchun sozlamalar
+        # Audio yuklab olish uchun sozlamalar (Agressiv qidiruv)
         audio_opts = {
             'format': 'bestaudio/best',
             'outtmpl': os.path.join(output_dir, '%(id)s_yt.%(ext)s'),
@@ -198,39 +197,59 @@ async def download_youtube_audio(query: str, output_dir: str = "downloads") -> O
             }],
             'quiet': True,
             'no_warnings': True,
-            'default_search': 'ytsearch1', # Eng yaxshi natijani olish
+            'default_search': 'ytsearch3', # 3 ta natijani tekshiramiz
             'noplaylist': True,
-            # TO'LIQ VERSIONI topish uchun filtrlar
-            'match_filter': yt_dlp.utils.match_filter_func("duration > 60 & !is_live"),
             'ignoreerrors': True,
         }
         
-        logger.info(f"YouTube'da TO'LIQ audio qidirilmoqda: {query}")
+        logger.info(f"YouTube'da qidiruv: {query}")
         with yt_dlp.YoutubeDL(audio_opts) as ydl:
-            # ytsearch: orqali qidirish
-            info = ydl.extract_info(f"ytsearch:{query}", download=True)
+            # ytsearch3: orqali qidirish
+            info_batch = ydl.extract_info(f"ytsearch3:{query}", download=False)
             
-            if not info or 'entries' not in info or len(info['entries']) == 0:
-                # Agar 60s dan kattalari topilmasa, cheklovsiz qidirib ko'ramiz
-                logger.info(f"Yirik versiya topilmadi, cheklovsiz qidirilmoqda: {query}")
-                audio_opts.pop('match_filter', None)
-                with yt_dlp.YoutubeDL(audio_opts) as ydl_retry:
-                    info = ydl_retry.extract_info(f"ytsearch:{query}", download=True)
+            if not info_batch or 'entries' not in info_batch or len(info_batch['entries']) == 0:
+                return None, None, None
 
-            if info and 'entries' in info and len(info['entries']) > 0:
-                info = info['entries'][0]
-                base_filename = ydl.prepare_filename(info)
-                audio_filename = os.path.splitext(base_filename)[0] + '.mp3'
+            # Eng yaxshi natijani tanlaymiz (60s dan katta va eng mos)
+            best_entry = None
+            for entry in info_batch['entries']:
+                if not entry: continue
                 
-                if os.path.exists(audio_filename):
-                    logger.info(f"YouTube'dan audio yuklandi: {audio_filename}")
-                    return audio_filename
+                duration = entry.get('duration', 0)
+                # Agar video 60s dan katta bo'lsa, bu bizga kerakli to'liq versiya
+                if duration > 60:
+                    best_entry = entry
+                    break
+            
+            # Agar 60s dan kattasi topilmasa, birinchisini olamiz
+            if not best_entry:
+                best_entry = info_batch['entries'][0]
+
+            if not best_entry:
+                return None, None, None
+
+            # Endi yuklab olamiz
+            logger.info(f"Yuklab olinmoqda: {best_entry.get('title')}")
+            ydl.download([best_entry['webpage_url']])
+            
+            # Fayl yo'lini topish
+            base_filename = ydl.prepare_filename(best_entry)
+            audio_filename = os.path.splitext(base_filename)[0] + '.mp3'
+            
+            if os.path.exists(audio_filename):
+                title = best_entry.get('title', 'Unknown Title')
+                artist = best_entry.get('uploader', 'Unknown Artist')
+                # Agar artist nomida " - Topic" bo'lsa, uni olib tashlaymiz
+                artist = artist.replace(' - Topic', '')
                 
-        return None
+                logger.info(f"Muvaffaqiyatli yuklandi: {audio_filename}")
+                return audio_filename, title, artist
+                
+        return None, None, None
         
     except Exception as e:
         logger.error(f"YouTube yuklab olishda xatolik: {e}")
-        return None
+        return None, None, None
 
 
 def cleanup_files(*file_paths: str) -> None:

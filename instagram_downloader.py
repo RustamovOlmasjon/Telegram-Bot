@@ -197,102 +197,89 @@ async def download_youtube_audio(query: str, output_dir: str = "downloads") -> T
     """
     try:
         os.makedirs(output_dir, exist_ok=True)
+        q = query.strip()
+        search_variants = [f"{q} audio", f"{q} song", q]
         
-        # Qidiruv so'zini tozalash va boyitish
-        clean_query = query.strip()
-        search_variants = [
-            f"{clean_query} official audio full",
-            f"{clean_query} original audio",
-            clean_query
-        ]
-        
-        audio_opts = {
-            'format': 'bestaudio/best',
-            'outtmpl': os.path.join(output_dir, '%(id)s_yt.%(ext)s'),
-            'postprocessors': [{
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'mp3',
-                'preferredquality': '192',
-            }],
-            'quiet': True,
-            'no_warnings': True,
-            'noplaylist': True,
-            'ignoreerrors': True,
-            'nocheckcertificate': True,
-        }
-
-        best_entry = None
+        # Qidiruv variantlarini yig'amiz
         all_entries = []
-
-        for sv in search_variants:
-            logger.info(f"YouTube searching variant: {sv}")
-            with yt_dlp.YoutubeDL(audio_opts) as ydl:
-                info = ydl.extract_info(f"ytsearch5:{sv}", download=False)
-                if info and 'entries' in info:
-                    entries = [e for e in info['entries'] if e]
-                    all_entries.extend(entries)
-                    
-                    # Davomiylikka qarab saralash (120-400 sekund ideal)
-                    for e in entries:
-                        d = e.get('duration', 0)
-                        if 120 < d < 480: # To'liq qo'shiq
-                            best_entry = e
-                            break
-                if best_entry: break
-
-        # Agar ideal topilmasa, eng yaxshi alternativani olamiz
-        if not best_entry and all_entries:
-            # Short (shorths) bo'lmagan birinchisini olamiz
-            for e in all_entries:
-                if e.get('duration', 0) > 60:
-                    best_entry = e
-                    break
-            # Agar hammasi short bo'lsa, shunchaki birinchisini olamiz
-            if not best_entry:
-                best_entry = all_entries[0]
-
-        if not best_entry:
-            return None, None, None
-
-        # Haqiqiy yuklab olish
-        url = best_entry.get('webpage_url') or f"https://www.youtube.com/watch?v={best_entry['id']}"
-        with yt_dlp.YoutubeDL(audio_opts) as ydl:
-            logger.info(f"Downloading chosen audio: {url}")
-            download_info = ydl.extract_info(url, download=True)
-            audio_path = ydl.prepare_filename(download_info)
-            audio_path = os.path.splitext(audio_path)[0] + '.mp3'
-            
-            if os.path.exists(audio_path):
-                # Metadata tozalash
-                raw_title = download_info.get('title', 'Unknown Title')
-                uploader = download_info.get('uploader', 'Unknown Artist')
-                
-                title = raw_title
-                artist = uploader.replace(' - Topic', '')
-                
-                if " - " in raw_title:
-                    parts = raw_title.split(" - ", 1)
-                    artist = parts[0].strip()
-                    title = parts[1].strip()
-                
-                # Keraksiz so'zlarni artish
-                junk_patterns = [
-                    r'\(official.*?\)', r'\[official.*?\]', r'\|.*?official.*',
-                    r'audio', r'video', r'clip', r'klip', r'hd', r'4k', r'full', r'original'
-                ]
-                for p in junk_patterns:
-                    title = re.sub(p, '', title, flags=re.IGNORECASE).strip()
-                    artist = re.sub(p, '', artist, flags=re.IGNORECASE).strip()
-                
-                return audio_path, title, artist
-                
-        return None, None, None
-    except Exception as e:
-        logger.error(f"Enhanced YouTube search error: {e}")
-        return None, None, None
+        with yt_dlp.YoutubeDL({'quiet': True, 'no_warnings': True, 'nocheckcertificate': True}) as ydl:
+            for sv in search_variants:
+                try:
+                    info = ydl.extract_info(f"ytsearch5:{sv}", download=False)
+                    if info and 'entries' in info:
+                        all_entries.extend([e for e in info['entries'] if e])
+                except: continue
         
+        if not all_entries: return None, None, None
+
+        # Saralash: To'liq qo'shiqlar (100s - 600s) ideal
+        unique_entries = {e['id']: e for e in all_entries}.values()
+        sorted_entries = sorted(unique_entries, key=lambda x: (100 < x.get('duration', 0) < 600), reverse=True)
+
+        for entry in list(sorted_entries)[:10]: # 10 tagacha sinab ko'ramiz
+            video_id = entry['id']
+            # Format tanlashda juda keng doirani olamiz: 'ba/b' (best audio yoki eng yaxshi video+audio)
+            final_opts = {
+                'format': 'bestaudio/best', # Avval audioni prob qilamiz
+                'outtmpl': os.path.join(output_dir, f'{video_id}_yt.%(ext)s'),
+                'postprocessors': [{
+                    'key': 'FFmpegExtractAudio',
+                    'preferredcodec': 'mp3',
+                    'preferredquality': '192',
+                }],
+                'quiet': True,
+                'no_warnings': True,
+                'nocheckcertificate': True,
+                'extractor_args': {'youtube': {'player_client': ['android', 'web']}},
+            }
+            
+            try:
+                logger.info(f"YTDL: {video_id} ni yuklashga harakat...")
+                with yt_dlp.YoutubeDL(final_opts) as ydl_final:
+                    # Agar birinchi urinish (bestaudio) o'xshamasa, 'best' ni prob qilamiz
+                    try:
+                        ydl_final.download([f"https://www.youtube.com/watch?v={video_id}"])
+                    except:
+                        logger.info(f"YTDL: {video_id} ni 'best' formatda prob qilyapmiz...")
+                        final_opts['format'] = 'best'
+                        with yt_dlp.YoutubeDL(final_opts) as ydl_fallback:
+                            ydl_fallback.download([f"https://www.youtube.com/watch?v={video_id}"])
+
+                # Faylni tekshirish
+                expected_mp3 = os.path.join(output_dir, f"{video_id}_yt.mp3")
+                if not os.path.exists(expected_mp3):
+                    for f in os.listdir(output_dir):
+                        if f.startswith(video_id) and (f.endswith(".mp3") or f.endswith(".m4a") or f.endswith(".mp4")):
+                            # Agar mp3 bo'lmasa lekin video kelsa, uni konvertatsiya qilamiz
+                            actual_file = os.path.join(output_dir, f)
+                            if not f.endswith(".mp3"):
+                                expected_mp3 = os.path.splitext(actual_file)[0] + ".mp3"
+                                import subprocess
+                                subprocess.run(f'ffmpeg -i "{actual_file}" -vn -ar 44100 -ac 2 -b:a 192k "{expected_mp3}" -y', shell=True, capture_output=True)
+                            else:
+                                expected_mp3 = actual_file
+                            break
+                
+                if os.path.exists(expected_mp3) and os.path.getsize(expected_mp3) > 1000:
+                    raw_title = entry.get('title', 'Unknown')
+                    uploader = entry.get('uploader', 'Unknown')
+                    artist, title = uploader.replace(' - Topic', ''), raw_title
+                    if " - " in raw_title:
+                        p = raw_title.split(" - ", 1)
+                        artist, title = p[0].strip(), p[1].strip()
+                    
+                    for junk in [r'\(official.*?\)', r'\[official.*?\]', r'audio', r'video', r'clip', r'klip', r'full', r'original']:
+                        title = re.sub(junk, '', title, flags=re.IGNORECASE).strip()
+                        artist = re.sub(junk, '', artist, flags=re.IGNORECASE).strip()
+                    
+                    return expected_mp3, title, artist
+            except Exception as e:
+                logger.warning(f"Failed {video_id}: {e}")
+                continue
+                
+        return None, None, None
     except Exception as e:
-        logger.error(f"YouTube yuklab olishda xatolik: {e}")
+        logger.error(f"Global download error: {e}")
         return None, None, None
 
 

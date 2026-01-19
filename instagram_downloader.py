@@ -193,19 +193,18 @@ async def download_instagram_content(url: str, output_dir: str = "downloads") ->
 
 async def download_youtube_audio(query: str, output_dir: str = "downloads") -> Tuple[Optional[str], Optional[str], Optional[str]]:
     """
-    YouTube'dan qidiruv bo'yicha eng mos audio faylni yuklab olish
-    
-    Args:
-        query: Qidiruv so'zi
-        output_dir: Fayllarni saqlash uchun papka
-        
-    Returns:
-        Tuple: (audio_path, title, artist) yoki (None, None, None)
+    YouTube'dan qidiruv bo'yicha eng mos audio faylni yuklab olish (Kuchsaytirilgan variant)
     """
     try:
         os.makedirs(output_dir, exist_ok=True)
         
-        # Audio yuklab olish uchun sozlamalar (Agressiv qidiruv)
+        # Qidiruvni boyitish
+        search_queries = [
+            f"{query} audio",
+            f"{query} official full",
+            query
+        ]
+        
         audio_opts = {
             'format': 'bestaudio/best',
             'outtmpl': os.path.join(output_dir, '%(id)s_yt.%(ext)s'),
@@ -216,76 +215,72 @@ async def download_youtube_audio(query: str, output_dir: str = "downloads") -> T
             }],
             'quiet': True,
             'no_warnings': True,
-            'default_search': 'ytsearch3', # 3 ta natijani tekshiramiz
             'noplaylist': True,
             'ignoreerrors': True,
         }
-        
-        logger.info(f"YouTube'da qidiruv: {query}")
+
+        best_entry = None
+
+        for s_query in search_queries:
+            logger.info(f"YouTube searching: {s_query}")
+            with yt_dlp.YoutubeDL(audio_opts) as ydl:
+                # 5 ta natijani olamiz
+                info_batch = ydl.extract_info(f"ytsearch5:{s_query}", download=False)
+                
+                if info_batch and 'entries' in info_batch:
+                    # Natijalarni tahlil qilish
+                    for entry in info_batch['entries']:
+                        if not entry: continue
+                        
+                        duration = entry.get('duration', 0)
+                        title = entry.get('title', '').lower()
+                        
+                        # SHORTLARNI O'CHIRISH (Kamida 100 sekund)
+                        # Va juda uzoq (10 min+) bo'lmaganlarini tanlash
+                        if 100 < duration < 600:
+                            # Agar sarlavhada "full" yoki "original" bo'lsa, bu juda yaxshi
+                            best_entry = entry
+                            break
+                    
+                    if best_entry:
+                        break
+
+        # Agar hali ham topilmasa, shunchaki birinchi eng yaxshisini olamiz
+        if not best_entry and info_batch and info_batch.get('entries'):
+             best_entry = info_batch['entries'][0]
+
+        if not best_entry:
+            return None, None, None
+
+        # Yuklab olish
         with yt_dlp.YoutubeDL(audio_opts) as ydl:
-            # ytsearch3: orqali qidirish
-            info_batch = ydl.extract_info(f"ytsearch3:{query}", download=False)
-            
-            if not info_batch or 'entries' not in info_batch or len(info_batch['entries']) == 0:
-                return None, None, None
-
-            # Eng yaxshi natijani tanlaymiz (60s dan katta va eng mos)
-            best_entry = None
-            for entry in info_batch['entries']:
-                if not entry: continue
-                
-                duration = entry.get('duration', 0)
-                # Agar video 60s dan katta bo'lsa, bu bizga kerakli to'liq versiya
-                if duration > 60:
-                    best_entry = entry
-                    break
-            
-            # Agar 60s dan kattasi topilmasa, birinchisini olamiz
-            if not best_entry:
-                best_entry = info_batch['entries'][0]
-
-            if not best_entry:
-                return None, None, None
-
-            # Endi yuklab olamiz
-            logger.info(f"Yuklab olinmoqda: {best_entry.get('title')}")
             ydl.download([best_entry['webpage_url']])
-            
-            # Fayl yo'lini topish
             base_filename = ydl.prepare_filename(best_entry)
-            audio_filename = os.path.splitext(base_filename)[0] + '.mp3'
+            audio_path = os.path.splitext(base_filename)[0] + '.mp3'
             
-            if os.path.exists(audio_filename):
-                raw_title = best_entry.get('title', 'Unknown Title')
-                raw_artist = best_entry.get('uploader', 'Unknown Artist')
+            if os.path.exists(audio_path):
+                raw_title = best_entry.get('title', 'Unknown')
+                uploader = best_entry.get('uploader', 'Unknown')
                 
-                # Sarlavhadan "Artist - Song" formatini ajratishga harakat qilamiz
-                title = raw_title
-                artist = raw_artist.replace(' - Topic', '')
+                # Tozalash
+                clean_title = raw_title
+                artist = uploader.replace(' - Topic', '')
                 
-                # Agar sarlavha ichida " - " bo'lsa
                 if " - " in raw_title:
-                    parts = raw_title.split(" - ", 1)
-                    artist = parts[0].strip()
-                    title = parts[1].strip()
+                    p = raw_title.split(" - ", 1)
+                    artist = p[0].strip()
+                    clean_title = p[1].strip()
                 
-                # Keraksiz qo'shimchalarni tozalash
-                for suffix in [
-                    "(Official Video)", "(Official Audio)", "(Lyric Video)", 
-                    "[Official Video]", "[Official Audio]", "(Official Music Video)",
-                    "| Official Video", "| Official Audio", "HD", "4K", "(Klip)", "(Official Clip)",
-                    "(Full HD)", "[Audio Only]"
-                ]:
-                    title = re.sub(re.escape(suffix), '', title, flags=re.IGNORECASE).strip()
-                    artist = re.sub(re.escape(suffix), '', artist, flags=re.IGNORECASE).strip()
-
-                # Agar artist nomi juda uzun yoki generic bo'lsa, uploaderdan foydalanamiz
-                if len(artist) > 50 or "YouTube" in artist:
-                    artist = raw_artist.replace(' - Topic', '')
+                # Keraksiz so'zlarni olib tashlash
+                for junk in ["(official video)", "(official audio)", "(clip)", "[audio]", "official", "clip", "video", "lyric"]:
+                    clean_title = re.sub(re.escape(junk), '', clean_title, flags=re.IGNORECASE).strip()
+                    artist = re.sub(re.escape(junk), '', artist, flags=re.IGNORECASE).strip()
                 
-                logger.info(f"Muvaffaqiyatli yuklandi: {audio_filename} (Artist: {artist}, Title: {title})")
-                return audio_filename, title, artist
+                return audio_path, clean_title, artist
                 
+        return None, None, None
+    except Exception as e:
+        logger.error(f"Enhanced YouTube search error: {e}")
         return None, None, None
         
     except Exception as e:

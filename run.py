@@ -154,7 +154,13 @@ async def handle_text_messages(message: Message):
                 audio_size = get_file_size_mb(audio_path)
                 if audio_size <= MAX_SIZE_MB:
                     await status_msg.edit_text("🎵 Audio yuborilmoqda...")
-                    await message.answer_audio(FSInputFile(audio_path), caption="✅ Instagram audio")
+                    ig_title = song_query if song_query else "Instagram Audio"
+                    await message.answer_audio(
+                        FSInputFile(audio_path),
+                        title=ig_title,
+                        performer="Instagram",
+                        caption=f"✅ Instagram audio"
+                    )
             
             # ORIGINAL VARIANT qidiruv (agar metadata topilgan bo'lsa)
             yt_path = None

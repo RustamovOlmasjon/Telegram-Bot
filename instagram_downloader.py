@@ -101,32 +101,33 @@ async def download_instagram_content(url: str, output_dir: str = "downloads") ->
                         break
             
             # Keraksiz generic nomlarni filtrlash
+            is_original_audio = False
             for forbidden in ["original audio", "original music", "originalniy zvuk", "asl audio"]:
                 if song_query and forbidden in song_query.lower():
-                    song_query = None
+                    is_original_audio = True
                     break
+            
+            if is_original_audio:
+                # Agar faqat "Original audio" bo'lsa, uni qidirish foydasiz
+                # Lekin foydalanuvchi uploader orqali topishni xohlashi mumkin
+                if uploader:
+                    song_query = f"{uploader} yangi klip"
+                else:
+                    song_query = None
 
             # Sarlavhani tahlil qilish (Agar hali ham yo'q bo'lsa)
             if not song_query and title:
-                # Instagram video/reel yozuvlarini va keraksiz belgilarni olib tashlaymiz
                 clean_title = re.sub(r'Instagram (?:video|reel|reels|post|TV).*', '', title, flags=re.IGNORECASE).strip()
-                clean_title = re.sub(r'#\w+|@\w+|https?://\S+|www\.\S+', '', clean_title).strip() # Hashtag, mention va linklarni olib tashlash
+                clean_title = re.sub(r'#\w+|@\w+|https?://\S+|www\.\S+', '', clean_title).strip()
                 if clean_title and len(clean_title) > 5:
                     song_query = clean_title
             
-            # Teaglardan qidirish
-            if not song_query and tags:
-                music_tags = [t for t in tags if any(word in t.lower() for word in ['music', 'song', 'audio', 'cover'])]
-                if music_tags:
-                    song_query = music_tags[0]
-
-            # Agar juda qisqa bo'lsa yoki topilmasa, uploader + title fallback (eng oxirgi chora)
+            # Agar juda qisqa bo'lsa yoki topilmasa, uploader fallback
             if not song_query and uploader:
-                # Uploader nomidan ba'zi qismlarni olamiz
                 clean_uploader = re.sub(r'[\._]', ' ', uploader).strip()
-                song_query = f"{clean_uploader} yangi tarona"
+                song_query = f"{clean_uploader} qo'shiq"
 
-            logger.info(f"YUNALISH: track={track}, artist={artist}, query={song_query}")
+            logger.info(f"ANALIZ: track={track}, artist={artist}, query={song_query}")
 
             # 2. Video yuklab olish
             video_opts = {
@@ -135,19 +136,19 @@ async def download_instagram_content(url: str, output_dir: str = "downloads") ->
             }
             with yt_dlp.YoutubeDL(video_opts) as ydl_v:
                 ydl_v.download([url])
+                # Fayl yo'lini aniq topish
                 video_filename = ydl_v.prepare_filename(info)
-                if os.path.exists(video_filename):
-                    video_path = video_filename
-                else:
-                    # Kengaytmani tekshirish (.mp4, .mov, .mkv)
+                if not os.path.exists(video_filename):
                     actual_dir = os.path.dirname(video_filename)
                     basename = os.path.splitext(os.path.basename(video_filename))[0]
                     for f in os.listdir(actual_dir):
                         if f.startswith(basename):
                             video_path = os.path.join(actual_dir, f)
                             break
+                else:
+                    video_path = video_filename
 
-            # 3. Audio yuklab olish
+            # 3. Audio yuklab olish (Guaranteed)
             audio_opts = {
                 **base_opts,
                 'format': 'bestaudio/best',
@@ -158,13 +159,31 @@ async def download_instagram_content(url: str, output_dir: str = "downloads") ->
                     'preferredquality': '192',
                 }],
             }
-            with yt_dlp.YoutubeDL(audio_opts) as ydl_a:
-                ydl_a.download([url])
-                base_audio = ydl_a.prepare_filename(info)
-                audio_path = os.path.splitext(base_audio)[0] + '.mp3'
-                if not os.path.exists(audio_path):
-                    audio_path = None
+            try:
+                with yt_dlp.YoutubeDL(audio_opts) as ydl_a:
+                    ydl_a.download([url])
+                    base_audio = ydl_a.prepare_filename(info)
+                    audio_path = os.path.splitext(base_audio)[0] + '.mp3'
+                    if not os.path.exists(audio_path):
+                        # Agar topilmasa, videodan ajratamiz
+                        if video_path and os.path.exists(video_path):
+                            logger.info("Direct audio download failed, extracting from video...")
+                            audio_path = os.path.splitext(video_path)[0] + ".mp3"
+                            import subprocess
+                            cmd = f'ffmpeg -i "{video_path}" -vn -ar 44100 -ac 2 -b:a 192k "{audio_path}" -y'
+                            subprocess.run(cmd, shell=True, capture_output=True)
+            except Exception as ae:
+                logger.error(f"Audio download error: {ae}")
+                if video_path and os.path.exists(video_path):
+                    audio_path = os.path.splitext(video_path)[0] + ".mp3"
+                    import subprocess
+                    cmd = f'ffmpeg -i "{video_path}" -vn -ar 44100 -ac 2 -b:a 192k "{audio_path}" -y'
+                    subprocess.run(cmd, shell=True, capture_output=True)
         
+        # Yakuniy tekshiruv
+        if audio_path and not os.path.exists(audio_path):
+            audio_path = None
+            
         return video_path, audio_path, song_query
         
     except Exception as e:
@@ -237,12 +256,34 @@ async def download_youtube_audio(query: str, output_dir: str = "downloads") -> T
             audio_filename = os.path.splitext(base_filename)[0] + '.mp3'
             
             if os.path.exists(audio_filename):
-                title = best_entry.get('title', 'Unknown Title')
-                artist = best_entry.get('uploader', 'Unknown Artist')
-                # Agar artist nomida " - Topic" bo'lsa, uni olib tashlaymiz
-                artist = artist.replace(' - Topic', '')
+                raw_title = best_entry.get('title', 'Unknown Title')
+                raw_artist = best_entry.get('uploader', 'Unknown Artist')
                 
-                logger.info(f"Muvaffaqiyatli yuklandi: {audio_filename}")
+                # Sarlavhadan "Artist - Song" formatini ajratishga harakat qilamiz
+                title = raw_title
+                artist = raw_artist.replace(' - Topic', '')
+                
+                # Agar sarlavha ichida " - " bo'lsa
+                if " - " in raw_title:
+                    parts = raw_title.split(" - ", 1)
+                    artist = parts[0].strip()
+                    title = parts[1].strip()
+                
+                # Keraksiz qo'shimchalarni tozalash
+                for suffix in [
+                    "(Official Video)", "(Official Audio)", "(Lyric Video)", 
+                    "[Official Video]", "[Official Audio]", "(Official Music Video)",
+                    "| Official Video", "| Official Audio", "HD", "4K", "(Klip)", "(Official Clip)",
+                    "(Full HD)", "[Audio Only]"
+                ]:
+                    title = re.sub(re.escape(suffix), '', title, flags=re.IGNORECASE).strip()
+                    artist = re.sub(re.escape(suffix), '', artist, flags=re.IGNORECASE).strip()
+
+                # Agar artist nomi juda uzun yoki generic bo'lsa, uploaderdan foydalanamiz
+                if len(artist) > 50 or "YouTube" in artist:
+                    artist = raw_artist.replace(' - Topic', '')
+                
+                logger.info(f"Muvaffaqiyatli yuklandi: {audio_filename} (Artist: {artist}, Title: {title})")
                 return audio_filename, title, artist
                 
         return None, None, None

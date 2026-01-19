@@ -193,16 +193,17 @@ async def download_instagram_content(url: str, output_dir: str = "downloads") ->
 
 async def download_youtube_audio(query: str, output_dir: str = "downloads") -> Tuple[Optional[str], Optional[str], Optional[str]]:
     """
-    YouTube'dan qidiruv bo'yicha eng mos audio faylni yuklab olish (Kuchsaytirilgan variant)
+    YouTube'dan qidiruv bo'yicha audio faylni yuklab olish (100% natija uchun)
     """
     try:
         os.makedirs(output_dir, exist_ok=True)
         
-        # Qidiruvni boyitish
-        search_queries = [
-            f"{query} audio",
-            f"{query} official full",
-            query
+        # Qidiruv so'zini tozalash va boyitish
+        clean_query = query.strip()
+        search_variants = [
+            f"{clean_query} official audio full",
+            f"{clean_query} original audio",
+            clean_query
         ]
         
         audio_opts = {
@@ -217,66 +218,73 @@ async def download_youtube_audio(query: str, output_dir: str = "downloads") -> T
             'no_warnings': True,
             'noplaylist': True,
             'ignoreerrors': True,
+            'nocheckcertificate': True,
         }
 
         best_entry = None
+        all_entries = []
 
-        for s_query in search_queries:
-            logger.info(f"YouTube searching: {s_query}")
+        for sv in search_variants:
+            logger.info(f"YouTube searching variant: {sv}")
             with yt_dlp.YoutubeDL(audio_opts) as ydl:
-                # 5 ta natijani olamiz
-                info_batch = ydl.extract_info(f"ytsearch5:{s_query}", download=False)
-                
-                if info_batch and 'entries' in info_batch:
-                    # Natijalarni tahlil qilish
-                    for entry in info_batch['entries']:
-                        if not entry: continue
-                        
-                        duration = entry.get('duration', 0)
-                        title = entry.get('title', '').lower()
-                        
-                        # SHORTLARNI O'CHIRISH (Kamida 100 sekund)
-                        # Va juda uzoq (10 min+) bo'lmaganlarini tanlash
-                        if 100 < duration < 600:
-                            # Agar sarlavhada "full" yoki "original" bo'lsa, bu juda yaxshi
-                            best_entry = entry
-                            break
+                info = ydl.extract_info(f"ytsearch5:{sv}", download=False)
+                if info and 'entries' in info:
+                    entries = [e for e in info['entries'] if e]
+                    all_entries.extend(entries)
                     
-                    if best_entry:
-                        break
+                    # Davomiylikka qarab saralash (120-400 sekund ideal)
+                    for e in entries:
+                        d = e.get('duration', 0)
+                        if 120 < d < 480: # To'liq qo'shiq
+                            best_entry = e
+                            break
+                if best_entry: break
 
-        # Agar hali ham topilmasa, shunchaki birinchi eng yaxshisini olamiz
-        if not best_entry and info_batch and info_batch.get('entries'):
-             best_entry = info_batch['entries'][0]
+        # Agar ideal topilmasa, eng yaxshi alternativani olamiz
+        if not best_entry and all_entries:
+            # Short (shorths) bo'lmagan birinchisini olamiz
+            for e in all_entries:
+                if e.get('duration', 0) > 60:
+                    best_entry = e
+                    break
+            # Agar hammasi short bo'lsa, shunchaki birinchisini olamiz
+            if not best_entry:
+                best_entry = all_entries[0]
 
         if not best_entry:
             return None, None, None
 
-        # Yuklab olish
+        # Haqiqiy yuklab olish
+        url = best_entry.get('webpage_url') or f"https://www.youtube.com/watch?v={best_entry['id']}"
         with yt_dlp.YoutubeDL(audio_opts) as ydl:
-            ydl.download([best_entry['webpage_url']])
-            base_filename = ydl.prepare_filename(best_entry)
-            audio_path = os.path.splitext(base_filename)[0] + '.mp3'
+            logger.info(f"Downloading chosen audio: {url}")
+            download_info = ydl.extract_info(url, download=True)
+            audio_path = ydl.prepare_filename(download_info)
+            audio_path = os.path.splitext(audio_path)[0] + '.mp3'
             
             if os.path.exists(audio_path):
-                raw_title = best_entry.get('title', 'Unknown')
-                uploader = best_entry.get('uploader', 'Unknown')
+                # Metadata tozalash
+                raw_title = download_info.get('title', 'Unknown Title')
+                uploader = download_info.get('uploader', 'Unknown Artist')
                 
-                # Tozalash
-                clean_title = raw_title
+                title = raw_title
                 artist = uploader.replace(' - Topic', '')
                 
                 if " - " in raw_title:
-                    p = raw_title.split(" - ", 1)
-                    artist = p[0].strip()
-                    clean_title = p[1].strip()
+                    parts = raw_title.split(" - ", 1)
+                    artist = parts[0].strip()
+                    title = parts[1].strip()
                 
-                # Keraksiz so'zlarni olib tashlash
-                for junk in ["(official video)", "(official audio)", "(clip)", "[audio]", "official", "clip", "video", "lyric"]:
-                    clean_title = re.sub(re.escape(junk), '', clean_title, flags=re.IGNORECASE).strip()
-                    artist = re.sub(re.escape(junk), '', artist, flags=re.IGNORECASE).strip()
+                # Keraksiz so'zlarni artish
+                junk_patterns = [
+                    r'\(official.*?\)', r'\[official.*?\]', r'\|.*?official.*',
+                    r'audio', r'video', r'clip', r'klip', r'hd', r'4k', r'full', r'original'
+                ]
+                for p in junk_patterns:
+                    title = re.sub(p, '', title, flags=re.IGNORECASE).strip()
+                    artist = re.sub(p, '', artist, flags=re.IGNORECASE).strip()
                 
-                return audio_path, clean_title, artist
+                return audio_path, title, artist
                 
         return None, None, None
     except Exception as e:

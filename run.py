@@ -198,9 +198,18 @@ async def handle_text_messages(message: Message):
         status_msg = await message.answer(f"🔍 '{text}' qidirilmoqda...")
         
         try:
+            # Artist qidiruvi bo'lsa (masalan bir so'z) qidiruvni kuchaytiramiz
+            query = text
+            if len(text.split()) == 1:
+                query = f"{text} eng sara qo'shiqlari"
+
             # YouTube'dan original audioni qidirib yuklash
-            audio_path, title, artist = await download_youtube_audio(text)
+            audio_path, title, artist = await download_youtube_audio(query)
             
+            # Agar topilmasa, asl matn bo'yicha qidiramiz
+            if not audio_path and query != text:
+                audio_path, title, artist = await download_youtube_audio(text)
+
             if audio_path:
                 audio_size = get_file_size_mb(audio_path)
                 MAX_SIZE_MB = 100
@@ -218,7 +227,7 @@ async def handle_text_messages(message: Message):
                     )
                     await status_msg.delete()
             else:
-                await status_msg.edit_text(f"❌ Afsuski, '{text}' bo'yicha hech narsa topilmadi.")
+                await status_msg.edit_text(f"❌ '{text}' bo'yicha hech qanday qo'shiq topilmadi. Iltimos, aniqroq yozing.")
                 
             # Faylni tozalash
             cleanup_files(audio_path)

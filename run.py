@@ -191,27 +191,17 @@ async def handle_text_messages(message: Message):
     else:
         # Menyu tugmalariga javob berishni to'xtatish
         excluded_texts = ["ℹ️ Yordam", "Biz haqimizda", "Xizmatlar", "Bog'lanish", "Sozlamalar", "Orqaga", "Bekor qilish", "Assalomu alaykum"]
-        if text in excluded_texts:
+        if text.strip() in excluded_texts:
             return
 
         # Qo'shiq qidirish
         status_msg = await message.answer(f"🔍 '{text}' qidirilmoqda...")
         
         try:
-            # Artist qidiruvi bo'lsa (masalan bir so'z) qidiruvni kengaytiramiz
-            # Lekin agar u link bo'lmasa va 1-2 so'z bo'lsa, "official" qo'shamiz
-            query = text
-            words = text.split()
-            if len(words) <= 2:
-                query = f"{text} official audio"
-
             # YouTube'dan original audioni qidirib yuklash
-            audio_path, title, artist = await download_youtube_audio(query)
+            # download_youtube_audio funksiyasi o'zi "official" variantlarni tekshiradi
+            audio_path, title, artist = await download_youtube_audio(text)
             
-            # Agar topilmasa, asl matn bo'yicha qidiramiz
-            if not audio_path and query != text:
-                audio_path, title, artist = await download_youtube_audio(text)
-
             if audio_path:
                 audio_size = get_file_size_mb(audio_path)
                 MAX_SIZE_MB = 100
@@ -222,26 +212,29 @@ async def handle_text_messages(message: Message):
                     await status_msg.edit_text("🎵 Audio topildi, yuborilmoqda...")
                     audio_file = FSInputFile(audio_path)
                     
-                    # Agar artist/title aniqlanmagan bo'lsa, textdan foydalanamiz
+                    # Agar artist/title aniqlanmagan bo'lsa, qidirilgan matndan foydalanamiz
                     final_title = title if title and title != "Unknown" else text
-                    final_artist = artist if artist and artist != "Unknown" else "YouTube"
+                    final_artist = artist if artist and artist != "Unknown" else "Musiqa"
 
                     await message.answer_audio(
                         audio_file,
                         title=final_title,
                         performer=final_artist,
-                        caption=f"✅ '{text}' so'rovi bo'yicha topildi original versiya."
+                        caption=f"✅ '{text}' bo'yicha topilgan eng yaxshi variant."
                     )
                     await status_msg.delete()
             else:
-                await status_msg.edit_text(f"❌ Kechirshiz, '{text}' bo'yicha hech qanday original qo'shiq topilmadi.\nIltimos, qo'shiq yoki artist nomini aniqroq yozib ko'ring.")
+                await status_msg.edit_text(
+                    f"❌ Kechirasiz, '{text}' bo'yicha hech qanday original qo'shiq topilmadi.\n\n"
+                    "💡 **Maslahat:** Artist nomi va qo'shiq nomini birga yozib ko'ring (masalan: *Janob Rasul Gulyuzim*)."
+                )
                 
             # Faylni tozalash
             cleanup_files(audio_path)
             
         except Exception as e:
-            logger.error(f"YouTube search handler xatolik: {e}")
-            await status_msg.edit_text("❌ Qidiruv jarayonida texnik xatolik yuz berdi. Iltimos, keyinroq urinib ko'ring.")
+            logger.error(f"YouTube search handler error: {e}")
+            await status_msg.edit_text("❌ Qidiruv jarayonida xatolik yuz berdi. Iltimos, birozdan so'ng qayta urinib ko'ring.")
 
 
 

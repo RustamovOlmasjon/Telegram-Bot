@@ -54,6 +54,12 @@ async def download_instagram_content(url: str, output_dir: str = "downloads") ->
             'no_warnings': True,
             'format': 'best',
             'ignoreerrors': True,
+            'nocheckcertificate': True,
+            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+            'http_headers': {
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.9',
+            }
         }
         
         video_path = None
@@ -63,7 +69,11 @@ async def download_instagram_content(url: str, output_dir: str = "downloads") ->
         # 1. Ma'lumotlarni bir marta olish
         with yt_dlp.YoutubeDL(base_opts) as ydl:
             logger.info(f"Instagram ma'lumotlari olinmoqda: {url}")
-            info = ydl.extract_info(url, download=False)
+            try:
+                info = ydl.extract_info(url, download=False)
+            except Exception as ie:
+                logger.error(f"Extract info error: {ie}")
+                info = None
             
             if not info:
                 return None, None, None
@@ -76,7 +86,12 @@ async def download_instagram_content(url: str, output_dir: str = "downloads") ->
             alt_title = info.get('alt_title')
             description = info.get('description', '')
             title = info.get('title', '')
-            tags = info.get('tags', [])
+            
+            # Instagram maxsus metadata maydonlari
+            music_info = info.get('music_info', {})
+            if music_info:
+                track = music_info.get('title', track)
+                artist = music_info.get('artist', artist)
             
             # To'g'ridan-to'g'ri metadata bo'lsa (Eng ishonchli)
             if track and artist:
@@ -84,7 +99,8 @@ async def download_instagram_content(url: str, output_dir: str = "downloads") ->
             elif track:
                 song_query = track
             elif alt_title:
-                song_query = alt_title
+                if artist: song_query = f"{artist} - {alt_title}"
+                else: song_query = alt_title
             
             # Tavsifdan regex orqali qidirish
             if not song_query and description:
@@ -202,17 +218,32 @@ async def download_youtube_audio(query: str, output_dir: str = "downloads") -> T
     try:
         os.makedirs(output_dir, exist_ok=True)
         q = query.strip()
-        search_variants = [f"{q} audio", f"{q} song", q]
+        
+        # Qidiruv variantlarini aqlli tuzamiz
+        search_variants = []
+        if "official" not in q.lower():
+            search_variants.append(f"{q} official audio")
+        search_variants.append(q)
         
         # Qidiruv variantlarini yig'amiz
         all_entries = []
-        with yt_dlp.YoutubeDL({'quiet': True, 'no_warnings': True, 'nocheckcertificate': True}) as ydl:
+        ydl_opts = {
+            'quiet': True, 
+            'no_warnings': True, 
+            'nocheckcertificate': True,
+            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+        }
+        
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             for sv in search_variants:
                 try:
+                    logger.info(f"YouTube searching: {sv}")
                     info = ydl.extract_info(f"ytsearch5:{sv}", download=False)
                     if info and 'entries' in info:
                         all_entries.extend([e for e in info['entries'] if e])
-                except: continue
+                except Exception as e: 
+                    logger.error(f"Search error for {sv}: {e}")
+                    continue
         
         if not all_entries: return None, None, None
 
@@ -225,32 +256,36 @@ async def download_youtube_audio(query: str, output_dir: str = "downloads") -> T
             uploader = e.get('uploader', '').lower()
             duration = e.get('duration', 0)
             
-            # Duration score (ideal 2-5 mins)
-            if 120 <= duration <= 360: score += 50
-            elif 60 <= duration <= 600: score += 20
+            # Duration score (ideal 2-6 mins)
+            if 120 <= duration <= 360: score += 100
+            elif 60 <= duration <= 600: score += 50
+            elif duration > 600: score -= 50 # Juda uzunlar (masalan albomlar)
             
             # Title keywords score
-            if any(k in title for k in ['official', 'original', 'full', 'audio']): score += 30
-            if 'remix' in title: score -= 20
-            if 'live' in title: score -= 10
+            if any(k in title for k in ['official', 'original', 'full', 'audio']): score += 40
+            if 'mix' in title or 'remix' in title: score -= 30
+            if 'live' in title: score -= 20
             
             # Channel keywords score
-            if any(k in uploader for k in ['official', 'vevo', 'topic', 'music']): score += 40
+            if any(k in uploader for k in ['official', 'vevo', 'topic', 'music']): score += 60
             
             # Query match score
-            q_words = q.lower().split()
+            q_clean = q.lower().replace('official', '').replace('audio', '').strip()
+            q_words = q_clean.split()
             match_count = sum(1 for w in q_words if w in title or w in uploader)
-            score += (match_count / len(q_words)) * 50 if q_words else 0
+            if q_words:
+                score += (match_count / len(q_words)) * 80
             
             return score
 
         sorted_entries = sorted(unique_entries, key=rate_entry, reverse=True)
 
-        for entry in list(sorted_entries)[:10]: # 10 tagacha sinab ko'ramiz
+        for entry in list(sorted_entries)[:5]: # 5 tagacha sinab ko'ramiz
             video_id = entry['id']
-            # Format tanlashda juda keng doirani olamiz: 'ba/b' (best audio yoki eng yaxshi video+audio)
+            video_url = f"https://www.youtube.com/watch?v={video_id}"
+            
             final_opts = {
-                'format': 'bestaudio/best', # Avval audioni prob qilamiz
+                'format': 'bestaudio/best',
                 'outtmpl': os.path.join(output_dir, f'{video_id}_yt.%(ext)s'),
                 'postprocessors': [{
                     'key': 'FFmpegExtractAudio',
@@ -260,56 +295,40 @@ async def download_youtube_audio(query: str, output_dir: str = "downloads") -> T
                 'quiet': True,
                 'no_warnings': True,
                 'nocheckcertificate': True,
-                'extractor_args': {'youtube': {'player_client': ['android', 'web']}},
+                'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
             }
             
             try:
-                logger.info(f"YTDL: {video_id} ni yuklashga harakat...")
+                logger.info(f"Downloading found song: {video_url}")
                 with yt_dlp.YoutubeDL(final_opts) as ydl_final:
-                    # Agar birinchi urinish (bestaudio) o'xshamasa, 'best' ni prob qilamiz
-                    try:
-                        ydl_final.download([f"https://www.youtube.com/watch?v={video_id}"])
-                    except:
-                        logger.info(f"YTDL: {video_id} ni 'best' formatda prob qilyapmiz...")
-                        final_opts['format'] = 'best'
-                        with yt_dlp.YoutubeDL(final_opts) as ydl_fallback:
-                            ydl_fallback.download([f"https://www.youtube.com/watch?v={video_id}"])
+                    ydl_final.download([video_url])
 
                 # Faylni tekshirish
                 expected_mp3 = os.path.join(output_dir, f"{video_id}_yt.mp3")
-                if not os.path.exists(expected_mp3):
-                    for f in os.listdir(output_dir):
-                        if f.startswith(video_id) and (f.endswith(".mp3") or f.endswith(".m4a") or f.endswith(".mp4")):
-                            # Agar mp3 bo'lmasa lekin video kelsa, uni konvertatsiya qilamiz
-                            actual_file = os.path.join(output_dir, f)
-                            if not f.endswith(".mp3"):
-                                expected_mp3 = os.path.splitext(actual_file)[0] + ".mp3"
-                                import subprocess
-                                subprocess.run(f'ffmpeg -i "{actual_file}" -vn -ar 44100 -ac 2 -b:a 192k "{expected_mp3}" -y', shell=True, capture_output=True)
-                            else:
-                                expected_mp3 = actual_file
-                            break
-                
                 if os.path.exists(expected_mp3) and os.path.getsize(expected_mp3) > 1000:
                     raw_title = entry.get('title', 'Unknown')
                     uploader = entry.get('uploader', 'Unknown')
-                    artist, title = uploader.replace(' - Topic', ''), raw_title
+                    
+                    # Metadata tozalash
+                    artist = uploader.replace(' - Topic', '').replace('Official', '').replace('VEVO', '').strip()
+                    title = raw_title
+                    
                     if " - " in raw_title:
                         p = raw_title.split(" - ", 1)
                         artist, title = p[0].strip(), p[1].strip()
                     
-                    for junk in [r'\(official.*?\)', r'\[official.*?\]', r'audio', r'video', r'clip', r'klip', r'full', r'original']:
+                    for junk in [r'\(official.*?\)', r'\[official.*?\]', r'audio', r'video', r'clip', r'klip', r'full', r'original', r'\d{4}']:
                         title = re.sub(junk, '', title, flags=re.IGNORECASE).strip()
                         artist = re.sub(junk, '', artist, flags=re.IGNORECASE).strip()
                     
                     return expected_mp3, title, artist
             except Exception as e:
-                logger.warning(f"Failed {video_id}: {e}")
+                logger.warning(f"Failed download {video_id}: {e}")
                 continue
                 
         return None, None, None
     except Exception as e:
-        logger.error(f"Global download error: {e}")
+        logger.error(f"Global youtube download error: {e}")
         return None, None, None
 
 

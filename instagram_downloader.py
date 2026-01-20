@@ -159,30 +159,34 @@ async def download_instagram_content(url: str, output_dir: str = "downloads") ->
                     'preferredquality': '192',
                 }],
             }
+            
+            # Audio fayl nomini aniqlash
+            expected_audio = os.path.join(output_dir, f"{info['id']}_audio.mp3")
+            
             try:
                 with yt_dlp.YoutubeDL(audio_opts) as ydl_a:
                     ydl_a.download([url])
-                    base_audio = ydl_a.prepare_filename(info)
-                    audio_path = os.path.splitext(base_audio)[0] + '.mp3'
-                    if not os.path.exists(audio_path):
-                        # Agar topilmasa, videodan ajratamiz
-                        if video_path and os.path.exists(video_path):
-                            logger.info("Direct audio download failed, extracting from video...")
-                            audio_path = os.path.splitext(video_path)[0] + ".mp3"
-                            import subprocess
-                            cmd = f'ffmpeg -i "{video_path}" -vn -ar 44100 -ac 2 -b:a 192k "{audio_path}" -y'
-                            subprocess.run(cmd, shell=True, capture_output=True)
+                    if os.path.exists(expected_audio):
+                        audio_path = expected_audio
             except Exception as ae:
-                logger.error(f"Audio download error: {ae}")
+                logger.error(f"Direct audio download error: {ae}")
+
+            # Agar direct audio bo'lmasa yoki fayl yaratilmagan bo'lsa - videodan ajratamiz
+            if not audio_path or not os.path.exists(audio_path):
                 if video_path and os.path.exists(video_path):
-                    audio_path = os.path.splitext(video_path)[0] + ".mp3"
+                    logger.info("Extracting audio from video file...")
+                    audio_path = os.path.join(output_dir, f"{info['id']}_extracted.mp3")
                     import subprocess
-                    cmd = f'ffmpeg -i "{video_path}" -vn -ar 44100 -ac 2 -b:a 192k "{audio_path}" -y'
-                    subprocess.run(cmd, shell=True, capture_output=True)
-        
-        # Yakuniy tekshiruv
-        if audio_path and not os.path.exists(audio_path):
-            audio_path = None
+                    # Windowsda panjara va boshqa simvollarni to'g'ri ishlash uchun list formatida yuboramiz
+                    try:
+                        subprocess.run([
+                            'ffmpeg', '-i', video_path, 
+                            '-vn', '-ar', '44100', '-ac', '2', '-b:a', '192k', 
+                            audio_path, '-y'
+                        ], capture_output=True, check=True)
+                    except Exception as fe:
+                        logger.error(f"FFmpeg extraction failed: {fe}")
+                        audio_path = None
             
         return video_path, audio_path, song_query
         

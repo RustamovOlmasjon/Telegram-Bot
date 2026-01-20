@@ -256,31 +256,42 @@ async def download_youtube_audio(query: str, output_dir: str = "downloads") -> T
             uploader = e.get('uploader', '').lower()
             duration = e.get('duration', 0)
             
-            # Duration score (ideal 2-6 mins)
-            if 120 <= duration <= 360: score += 100
-            elif 60 <= duration <= 600: score += 50
-            elif duration > 600: score -= 50 # Juda uzunlar (masalan albomlar)
+            # Duration score - SHARPLY prioritize 2-6 mins
+            if 150 <= duration <= 360: 
+                score += 150 # Ideal song length
+            elif 120 <= duration <= 600: 
+                score += 80  # Acceptable length
+            elif duration < 120: 
+                score -= 100 # Too short (clip)
+            elif duration > 600: 
+                score -= 50  # Too long (mix/album)
             
             # Title keywords score
-            if any(k in title for k in ['official', 'original', 'full', 'audio']): score += 40
-            if 'mix' in title or 'remix' in title: score -= 30
-            if 'live' in title: score -= 20
+            if any(k in title for k in ['official', 'original', 'full', 'audio']): score += 60
+            if any(k in title for k in ['clip', 'klip', 'music video']): score += 30
+            if 'mix' in title or 'remix' in title: score -= 40
+            if 'live' in title: score -= 30
+            if 'short' in title or 'reel' in title or 'clip' in title and duration < 120: score -= 100
             
             # Channel keywords score
-            if any(k in uploader for k in ['official', 'vevo', 'topic', 'music']): score += 60
+            if any(k in uploader for k in ['official', 'vevo', 'topic', 'music']): score += 70
             
             # Query match score
             q_clean = q.lower().replace('official', '').replace('audio', '').strip()
             q_words = q_clean.split()
             match_count = sum(1 for w in q_words if w in title or w in uploader)
             if q_words:
-                score += (match_count / len(q_words)) * 80
+                score += (match_count / len(q_words)) * 100
             
             return score
 
         sorted_entries = sorted(unique_entries, key=rate_entry, reverse=True)
+        
+        # LOG sorted results for debugging in console
+        for i, entry in enumerate(list(sorted_entries)[:5]):
+            logger.info(f"Top {i+1}: {entry.get('title')} | Score: {rate_entry(entry)} | Dur: {entry.get('duration')}s")
 
-        for entry in list(sorted_entries)[:5]: # 5 tagacha sinab ko'ramiz
+        for entry in list(sorted_entries)[:10]: # 10 tagacha sinab ko'ramiz (limit oshirildi)
             video_id = entry['id']
             video_url = f"https://www.youtube.com/watch?v={video_id}"
             

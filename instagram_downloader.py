@@ -145,64 +145,49 @@ async def download_instagram_content(url: str, output_dir: str = "downloads") ->
 
             logger.info(f"ANALIZ: track={track}, artist={artist}, title={title}, query={song_query}")
 
-            # 2. Video yuklab olish
-            video_opts = {
-                **base_opts,
-                'outtmpl': os.path.join(output_dir, '%(id)s_video.%(ext)s'),
-            }
-            with yt_dlp.YoutubeDL(video_opts) as ydl_v:
-                ydl_v.download([url])
-                # Fayl yo'lini aniq topish
-                video_filename = ydl_v.prepare_filename(info)
-                if not os.path.exists(video_filename):
-                    actual_dir = os.path.dirname(video_filename)
-                    basename = os.path.splitext(os.path.basename(video_filename))[0]
-                    for f in os.listdir(actual_dir):
-                        if f.startswith(basename):
-                            video_path = os.path.join(actual_dir, f)
-                            break
-                else:
-                    video_path = video_filename
-
-            # 3. Audio yuklab olish (Guaranteed)
-            audio_opts = {
-                **base_opts,
-                'format': 'bestaudio/best',
-                'outtmpl': os.path.join(output_dir, '%(id)s_audio.%(ext)s'),
-                'postprocessors': [{
-                    'key': 'FFmpegExtractAudio',
-                    'preferredcodec': 'mp3',
-                    'preferredquality': '192',
-                }],
-            }
+            # PARALLEL EXECUTION: Instagram downloads + YouTube search
+            tasks = []
             
-            # Audio fayl nomini aniqlash
-            expected_audio = os.path.join(output_dir, f"{info['id']}_audio.mp3")
-            
-            try:
-                with yt_dlp.YoutubeDL(audio_opts) as ydl_a:
-                    ydl_a.download([url])
-                    if os.path.exists(expected_audio):
-                        audio_path = expected_audio
-            except Exception as ae:
-                logger.error(f"Direct audio download error: {ae}")
+            # 2. Video yuklab olish funksiyasi
+            async def dl_video():
+                v_opts = {**base_opts, 'outtmpl': os.path.join(output_dir, '%(id)s_video.%(ext)s')}
+                with yt_dlp.YoutubeDL(v_opts) as ydl_v:
+                    await asyncio.to_thread(ydl_v.download, [url])
+                    v_filename = ydl_v.prepare_filename(info)
+                    if not os.path.exists(v_filename):
+                        for f in os.listdir(output_dir):
+                            if f.startswith(info['id']) and (f.endswith(".mp4") or f.endswith(".webm")):
+                                return os.path.join(output_dir, f)
+                    return v_filename if os.path.exists(v_filename) else None
 
-            # Agar direct audio bo'lmasa yoki fayl yaratilmagan bo'lsa - videodan ajratamiz
+            # 3. Audio yuklab olish funksiyasi
+            async def dl_audio():
+                a_opts = {
+                    **base_opts, 'format': 'bestaudio/best',
+                    'outtmpl': os.path.join(output_dir, '%(id)s_audio.%(ext)s'),
+                    'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'}]
+                }
+                expected_a = os.path.join(output_dir, f"{info['id']}_audio.mp3")
+                with yt_dlp.YoutubeDL(a_opts) as ydl_a:
+                    await asyncio.to_thread(ydl_a.download, [url])
+                return expected_a if os.path.exists(expected_a) else None
+
+            # Barcha vazifalarni ishga tushiramiz
+            video_task = asyncio.create_task(dl_video())
+            audio_task = asyncio.create_task(dl_audio())
+            
+            # Natijalarni kutamiz
+            video_path = await video_task
+            audio_path = await audio_task
+
+            # Agar audio bo'lmasa, videodan ajratamiz (bu tez ishlaydi)
             if not audio_path or not os.path.exists(audio_path):
                 if video_path and os.path.exists(video_path):
-                    logger.info("Extracting audio from video file...")
+                    logger.info("Extracting audio from video...")
                     audio_path = os.path.join(output_dir, f"{info['id']}_extracted.mp3")
-                    import subprocess
-                    # Windowsda panjara va boshqa simvollarni to'g'ri ishlash uchun list formatida yuboramiz
                     try:
-                        subprocess.run([
-                            'ffmpeg', '-i', video_path, 
-                            '-vn', '-ar', '44100', '-ac', '2', '-b:a', '192k', 
-                            audio_path, '-y'
-                        ], capture_output=True, check=True)
-                    except Exception as fe:
-                        logger.error(f"FFmpeg extraction failed: {fe}")
-                        audio_path = None
+                        subprocess.run(['ffmpeg', '-i', video_path, '-vn', '-ar', '44100', '-ac', '2', '-b:a', '192k', audio_path, '-y'], capture_output=True, check=True)
+                    except: audio_path = None
             
         return video_path, audio_path, song_query
         
@@ -232,18 +217,29 @@ async def download_youtube_audio(query: str, output_dir: str = "downloads") -> T
             'no_warnings': True, 
             'nocheckcertificate': True,
             'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+            'extract_flat': True, # Faqat metadata olish uchun tezroq
         }
         
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            for sv in search_variants:
-                try:
-                    logger.info(f"YouTube searching: {sv}")
-                    info = ydl.extract_info(f"ytsearch5:{sv}", download=False)
-                    if info and 'entries' in info:
-                        all_entries.extend([e for e in info['entries'] if e])
-                except Exception as e: 
-                    logger.error(f"Search error for {sv}: {e}")
-                    continue
+        async def fetch_search_results(variant):
+            try:
+                # Loop ichida yangi event loop yoki thread safety bilan ishlash uchun 
+                # run_in_executor ishlatish ham mumkin, lekin yt-dlp extracting info async emas
+                # Shuning uchun asyncio.to_thread ishlatamiz (Python 3.9+)
+                def sync_extract():
+                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                        return ydl.extract_info(f"ytsearch3:{variant}", download=False)
+                
+                info = await asyncio.to_thread(sync_extract)
+                if info and 'entries' in info:
+                    return [e for e in info['entries'] if e]
+            except Exception as e:
+                logger.error(f"Search error for {variant}: {e}")
+            return []
+
+        # Hammasini parallel qidiramiz
+        results = await asyncio.gather(*[fetch_search_results(sv) for sv in search_variants])
+        for r in results:
+            all_entries.extend(r)
         
         if not all_entries: return None, None, None
 

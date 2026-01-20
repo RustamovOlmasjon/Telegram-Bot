@@ -198,10 +198,12 @@ async def handle_text_messages(message: Message):
         status_msg = await message.answer(f"🔍 '{text}' qidirilmoqda...")
         
         try:
-            # Artist qidiruvi bo'lsa (masalan bir so'z) qidiruvni kuchaytiramiz
+            # Artist qidiruvi bo'lsa (masalan bir so'z) qidiruvni kengaytiramiz
+            # Lekin agar u link bo'lmasa va 1-2 so'z bo'lsa, "official" qo'shamiz
             query = text
-            if len(text.split()) == 1:
-                query = f"{text} eng sara qo'shiqlari"
+            words = text.split()
+            if len(words) <= 2:
+                query = f"{text} official audio"
 
             # YouTube'dan original audioni qidirib yuklash
             audio_path, title, artist = await download_youtube_audio(query)
@@ -215,26 +217,31 @@ async def handle_text_messages(message: Message):
                 MAX_SIZE_MB = 100
                 
                 if audio_size > MAX_SIZE_MB:
-                    await status_msg.edit_text(f"⚠️ Qo'shiq juda katta ({audio_size:.1f} MB).")
+                    await status_msg.edit_text(f"⚠️ Qo'shiq hajmi juda katta ({audio_size:.1f} MB).\nTelegram orqali faqat 100 MB gacha yubora olaman.")
                 else:
                     await status_msg.edit_text("🎵 Audio topildi, yuborilmoqda...")
                     audio_file = FSInputFile(audio_path)
+                    
+                    # Agar artist/title aniqlanmagan bo'lsa, textdan foydalanamiz
+                    final_title = title if title and title != "Unknown" else text
+                    final_artist = artist if artist and artist != "Unknown" else "YouTube"
+
                     await message.answer_audio(
                         audio_file,
-                        title=title,
-                        performer=artist,
-                        caption=f"✅ '{text}' qidiruvi bo'yicha topildi."
+                        title=final_title,
+                        performer=final_artist,
+                        caption=f"✅ '{text}' so'rovi bo'yicha topildi original versiya."
                     )
                     await status_msg.delete()
             else:
-                await status_msg.edit_text(f"❌ '{text}' bo'yicha hech qanday qo'shiq topilmadi. Iltimos, aniqroq yozing.")
+                await status_msg.edit_text(f"❌ Kechirshiz, '{text}' bo'yicha hech qanday original qo'shiq topilmadi.\nIltimos, qo'shiq yoki artist nomini aniqroq yozib ko'ring.")
                 
             # Faylni tozalash
             cleanup_files(audio_path)
             
         except Exception as e:
             logger.error(f"YouTube search handler xatolik: {e}")
-            await status_msg.edit_text("❌ Qidiruvda xatolik yuz berdi.")
+            await status_msg.edit_text("❌ Qidiruv jarayonida texnik xatolik yuz berdi. Iltimos, keyinroq urinib ko'ring.")
 
 
 

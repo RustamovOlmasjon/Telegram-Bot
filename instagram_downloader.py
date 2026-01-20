@@ -127,7 +127,7 @@ async def download_instagram_content(url: str, output_dir: str = "downloads") ->
                 clean_uploader = re.sub(r'[\._]', ' ', uploader).strip()
                 song_query = f"{clean_uploader} qo'shiq"
 
-            logger.info(f"ANALIZ: track={track}, artist={artist}, query={song_query}")
+            logger.info(f"ANALIZ: track={track}, artist={artist}, title={title}, query={song_query}")
 
             # 2. Video yuklab olish
             video_opts = {
@@ -212,9 +212,35 @@ async def download_youtube_audio(query: str, output_dir: str = "downloads") -> T
         
         if not all_entries: return None, None, None
 
-        # Saralash: To'liq qo'shiqlar (100s - 600s) ideal
+        # unique entries
         unique_entries = {e['id']: e for e in all_entries}.values()
-        sorted_entries = sorted(unique_entries, key=lambda x: (100 < x.get('duration', 0) < 600), reverse=True)
+        
+        def rate_entry(e):
+            score = 0
+            title = e.get('title', '').lower()
+            uploader = e.get('uploader', '').lower()
+            duration = e.get('duration', 0)
+            
+            # Duration score (ideal 2-5 mins)
+            if 120 <= duration <= 360: score += 50
+            elif 60 <= duration <= 600: score += 20
+            
+            # Title keywords score
+            if any(k in title for k in ['official', 'original', 'full', 'audio']): score += 30
+            if 'remix' in title: score -= 20
+            if 'live' in title: score -= 10
+            
+            # Channel keywords score
+            if any(k in uploader for k in ['official', 'vevo', 'topic', 'music']): score += 40
+            
+            # Query match score
+            q_words = q.lower().split()
+            match_count = sum(1 for w in q_words if w in title or w in uploader)
+            score += (match_count / len(q_words)) * 50 if q_words else 0
+            
+            return score
+
+        sorted_entries = sorted(unique_entries, key=rate_entry, reverse=True)
 
         for entry in list(sorted_entries)[:10]: # 10 tagacha sinab ko'ramiz
             video_id = entry['id']

@@ -7,6 +7,8 @@ import os
 import re
 import yt_dlp
 import logging
+import asyncio
+import subprocess
 from typing import Optional, Tuple
 
 logger = logging.getLogger(__name__)
@@ -204,11 +206,8 @@ async def download_youtube_audio(query: str, output_dir: str = "downloads") -> T
         os.makedirs(output_dir, exist_ok=True)
         q = query.strip()
         
-        # Qidiruv variantlarini aqlli tuzamiz
-        search_variants = []
-        if "official" not in q.lower():
-            search_variants.append(f"{q} official audio")
-        search_variants.append(q)
+        # Qidiruv variantlarini aqlli tuzamiz (Tezlik uchun kamaytirdik)
+        search_variants = [q if "official" in q.lower() else f"{q} official audio"]
         
         # Qidiruv variantlarini yig'amiz
         all_entries = []
@@ -252,32 +251,36 @@ async def download_youtube_audio(query: str, output_dir: str = "downloads") -> T
             uploader = e.get('uploader', '').lower()
             duration = e.get('duration', 0)
             
-            # Duration score - SHARPLY prioritize 2-6 mins
+            # Duration score - SHARPLY prioritize 2-6 mins (Avoid clips)
             if 150 <= duration <= 360: 
                 score += 150 # Ideal song length
             elif 120 <= duration <= 600: 
                 score += 80  # Acceptable length
-            elif duration < 120: 
-                score -= 100 # Too short (clip)
+            elif duration < 60: 
+                score -= 200 # Too short (definitely not a full song)
             elif duration > 600: 
                 score -= 50  # Too long (mix/album)
             
             # Title keywords score
             if any(k in title for k in ['official', 'original', 'full', 'audio']): score += 60
             if any(k in title for k in ['clip', 'klip', 'music video']): score += 30
-            if 'mix' in title or 'remix' in title: score -= 40
+            if 'mix' in title or 'remix' in title: score -= 100
             if 'live' in title: score -= 30
-            if 'short' in title or 'reel' in title or 'clip' in title and duration < 120: score -= 100
+            if 'short' in title or 'reel' in title: score -= 150
             
-            # Channel keywords score
-            if any(k in uploader for k in ['official', 'vevo', 'topic', 'music']): score += 70
+            # Channel keywords score (Handasa uchun juda muhim)
+            if any(k in uploader for k in ['official', 'vevo', 'topic', 'music', 'handasa']): score += 100
             
-            # Query match score
+            # Query match score (Artist name match is crucial)
             q_clean = q.lower().replace('official', '').replace('audio', '').strip()
             q_words = q_clean.split()
             match_count = sum(1 for w in q_words if w in title or w in uploader)
             if q_words:
-                score += (match_count / len(q_words)) * 100
+                score += (match_count / len(q_words)) * 150 # Boosted weight
+            
+            # Exact match for Handasa or similar
+            if 'handasa' in q_clean and 'handasa' in uploader:
+                score += 200
             
             return score
 
@@ -369,3 +372,120 @@ def get_file_size_mb(file_path: str) -> float:
         size_bytes = os.path.getsize(file_path)
         return size_bytes / (1024 * 1024)
     return 0.0
+
+
+async def download_batch_youtube_audio(query: str, limit: int = 10, output_dir: str = "downloads"):
+    """
+    YouTube'dan qidiruv bo'yicha bir nechta audio fayllarni yuklab olish.
+    
+    Args:
+        query: Qidiruv matni
+        limit: Max qancha qo'shiq yuklab olish
+        output_dir: Fayllar saqlanadigan joy
+        
+    Returns:
+        list: [(path, title, artist), ...]
+    """
+    try:
+        os.makedirs(output_dir, exist_ok=True)
+        q = query.strip()
+        
+        # Qidiruv variantini tuzamiz
+        search_query = f"ytsearch{limit * 2}:{q}" # Ko'proq natija olamizki, filtrdan so'ng yetarli bo'lsin
+        
+        ydl_opts = {
+            'quiet': True, 
+            'no_warnings': True, 
+            'nocheckcertificate': True,
+            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+            'extract_flat': True,
+        }
+        
+        def sync_extract():
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                return ydl.extract_info(search_query, download=False)
+        
+        info = await asyncio.to_thread(sync_extract)
+        if not info or 'entries' not in info:
+            return []
+
+        # Unique va sifatli natijalarni tanlash
+        entries = [e for e in info['entries'] if e]
+        
+        def rate_entry(e):
+            score = 0
+            title = e.get('title', '').lower()
+            duration = e.get('duration', 0)
+            # Qo'shiq uzunligi 2-7 daqiqa bo'lsa yaxshi
+            if 120 <= duration <= 420: score += 100
+            if any(k in title for k in ['official', 'audio', 'original']): score += 50
+            if any(k in title for k in ['mix', 'remix', 'live', 'short', 'reel']): score -= 150
+            return score
+
+        sorted_entries = sorted(entries, key=rate_entry, reverse=True)
+        
+        # Faqat limit miqdoridagisini olamiz
+        selected_entries = sorted_entries[:limit]
+        
+        results = []
+        
+        # Parallel yuklab olish (Semaphore bilan limitlangan)
+        semaphore = asyncio.Semaphore(5) # Bir vaqtda 5 ta yuklab olish
+        
+        async def download_one(entry):
+            async with semaphore:
+                video_id = entry['id']
+                video_url = f"https://www.youtube.com/watch?v={video_id}"
+                
+                final_opts = {
+                    'format': 'bestaudio/best',
+                    'outtmpl': os.path.join(output_dir, f'{video_id}_batch.%(ext)s'),
+                    'postprocessors': [{
+                        'key': 'FFmpegExtractAudio',
+                        'preferredcodec': 'mp3',
+                        'preferredquality': '192',
+                    }],
+                    'quiet': True,
+                    'no_warnings': True,
+                    'nocheckcertificate': True,
+                }
+                
+                try:
+                    def sync_download():
+                        with yt_dlp.YoutubeDL(final_opts) as ydl:
+                            ydl.download([video_url])
+                    
+                    await asyncio.to_thread(sync_download)
+                    
+                    path = os.path.join(output_dir, f"{video_id}_batch.mp3")
+                    if os.path.exists(path) and os.path.getsize(path) > 1000:
+                        raw_title = entry.get('title', 'Unknown')
+                        uploader = entry.get('uploader', 'Unknown')
+                        
+                        # Metadata tozalash
+                        artist = uploader.replace(' - Topic', '').replace('Official', '').strip()
+                        title = raw_title
+                        
+                        if " - " in raw_title:
+                            p = raw_title.split(" - ", 1)
+                            artist, title = p[0].strip(), p[1].strip()
+                        
+                        for junk in [r'\(official.*?\)', r'\[official.*?\]', r'audio', r'video', r'clip', r'klip', r'full', r'original']:
+                            title = re.sub(junk, '', title, flags=re.IGNORECASE).strip()
+                            artist = re.sub(junk, '', artist, flags=re.IGNORECASE).strip()
+                            
+                        return (path, title, artist)
+                except Exception as e:
+                    logger.error(f"Batch download error for {video_id}: {e}")
+                return None
+
+        # Tasklarni yaratish
+        tasks = [download_one(e) for e in selected_entries]
+        downloaded = await asyncio.gather(*tasks)
+        
+        # None natijalarni olib tashlaymiz
+        return [r for r in downloaded if r]
+        
+    except Exception as e:
+        logger.error(f"Batch download global error: {e}")
+        return []

@@ -15,6 +15,7 @@ from instagram_downloader import (
     is_instagram_url,
     download_instagram_content,
     download_youtube_audio,
+    download_batch_youtube_audio,
     cleanup_files,
     get_file_size_mb
 )
@@ -194,47 +195,45 @@ async def handle_text_messages(message: Message):
         if text.strip() in excluded_texts:
             return
 
-        # Qo'shiq qidirish
-        status_msg = await message.answer(f"🔍 '{text}' qidirilmoqda...")
+        # Maxsus holat: Asl Wayne (19 ta qo'shiq)
+        is_asl_wayne = "asl way" in text.lower()
+        limit = 19 if is_asl_wayne else 10
+        
+        status_msg = await message.answer(f"🔍 '{text}' bo'yicha eng sara {limit} ta qo'shiq qidirilmoqda...")
         
         try:
-            # YouTube'dan original audioni qidirib yuklash
-            # download_youtube_audio funksiyasi o'zi "official" variantlarni tekshiradi
-            audio_path, title, artist = await download_youtube_audio(text)
+            # YouTube'dan bir nechta audiolarni yuklash
+            results = await download_batch_youtube_audio(text, limit=limit)
             
-            if audio_path:
-                audio_size = get_file_size_mb(audio_path)
-                MAX_SIZE_MB = 100
+            if results:
+                await status_msg.edit_text(f"🎵 {len(results)} ta qo'shiq topildi. Yuborilmoqda...")
                 
-                if audio_size > MAX_SIZE_MB:
-                    await status_msg.edit_text(f"⚠️ Qo'shiq hajmi juda katta ({audio_size:.1f} MB).\nTelegram orqali faqat 100 MB gacha yubora olaman.")
-                else:
-                    await status_msg.edit_text("🎵 Audio topildi, yuborilmoqda...")
-                    audio_file = FSInputFile(audio_path)
+                for path, title, artist in results:
+                    try:
+                        audio_size = get_file_size_mb(path)
+                        if audio_size <= 100:
+                            await message.answer_audio(
+                                FSInputFile(path),
+                                title=title,
+                                performer=artist,
+                                caption=f"✅ {artist} - {title}"
+                            )
+                    except Exception as send_err:
+                        logger.error(f"Error sending batch audio: {send_err}")
                     
-                    # Agar artist/title aniqlanmagan bo'lsa, qidirilgan matndan foydalanamiz
-                    final_title = title if title and title != "Unknown" else text
-                    final_artist = artist if artist and artist != "Unknown" else "Musiqa"
-
-                    await message.answer_audio(
-                        audio_file,
-                        title=final_title,
-                        performer=final_artist,
-                        caption=f"✅ '{text}' bo'yicha topilgan eng yaxshi variant."
-                    )
-                    await status_msg.delete()
+                    # Har bir faylni yuborgandan so'ng o'chirish (joy tejash uchun)
+                    cleanup_files(path)
+                
+                await status_msg.edit_text(f"✅ Tayyor! {len(results)} ta qo'shiq yuborildi.")
             else:
                 await status_msg.edit_text(
-                    f"❌ Kechirasiz, '{text}' bo'yicha hech qanday original qo'shiq topilmadi.\n\n"
-                    "💡 **Maslahat:** Artist nomi va qo'shiq nomini birga yozib ko'ring (masalan: *Janob Rasul Gulyuzim*)."
+                    f"❌ Kechirasiz, '{text}' bo'yicha qo'shiqlar topilmadi.\n\n"
+                    "💡 **Maslahat:** Ismni to'g'ri yozganingizga ishonch hosil qiling."
                 )
                 
-            # Faylni tozalash
-            cleanup_files(audio_path)
-            
         except Exception as e:
-            logger.error(f"YouTube search handler error: {e}")
-            await status_msg.edit_text("❌ Qidiruv jarayonida xatolik yuz berdi. Iltimos, birozdan so'ng qayta urinib ko'ring.")
+            logger.error(f"Batch search handler error: {e}")
+            await status_msg.edit_text("❌ Xatolik yuz berdi. Iltimos, qayta urinib ko'ring.")
 
 
 

@@ -195,45 +195,90 @@ async def handle_text_messages(message: Message):
         if text.strip() in excluded_texts:
             return
 
-        # Maxsus holat: Asl Wayne (19 ta qo'shiq)
-        is_asl_wayne = "asl way" in text.lower()
-        limit = 19 if is_asl_wayne else 10
+        # =============================================
+        # AQLLI QIDIRUV: Ijrochi yoki Qo'shiq aniqlash
+        # =============================================
         
-        status_msg = await message.answer(f"🔍 '{text}' bo'yicha eng sara {limit} ta qo'shiq qidirilmoqda...")
+        # Qo'shiq nomi belgisi: "-" bor yoki taniqli qo'shiq so'zlari
+        song_indicators = [" - ", "qo'shiq", "song", "mp3", "audio", "track"]
+        is_song_name = any(ind in text.lower() for ind in song_indicators)
         
-        try:
-            # YouTube'dan bir nechta audiolarni yuklash
-            results = await download_batch_youtube_audio(text, limit=limit)
+        # Agar matnda "-" bor bo'lsa (Masalan: "Yulduz Usmonova - Yig'lama") - bu qo'shiq
+        if " - " in text:
+            is_song_name = True
+        
+        if is_song_name:
+            # ============================================
+            # QOSHIQ NOMI - Faqat 1 ta to'liq versiya
+            # ============================================
+            status_msg = await message.answer(f"🔍 '{text}' qo'shig'ining to'liq versiyasini qidirmoqdaman...")
             
-            if results:
-                await status_msg.edit_text(f"🎵 {len(results)} ta qo'shiq topildi. Yuborilmoqda...")
+            try:
+                path, title, artist = await download_youtube_audio(text)
                 
-                for path, title, artist in results:
-                    try:
-                        audio_size = get_file_size_mb(path)
-                        if audio_size <= 100:
-                            await message.answer_audio(
-                                FSInputFile(path),
-                                title=title,
-                                performer=artist,
-                                caption=f"✅ {artist} - {title}"
-                            )
-                    except Exception as send_err:
-                        logger.error(f"Error sending batch audio: {send_err}")
-                    
-                    # Har bir faylni yuborgandan so'ng o'chirish (joy tejash uchun)
+                if path:
+                    audio_size = get_file_size_mb(path)
+                    if audio_size <= 100:
+                        await status_msg.edit_text("🎵 Topildi! Yuborilmoqda...")
+                        await message.answer_audio(
+                            FSInputFile(path),
+                            title=title,
+                            performer=artist,
+                            caption=f"✅ {artist} - {title}"
+                        )
+                        await status_msg.edit_text(f"✅ Tayyor! '{title}' qo'shig'i yuborildi.")
+                    else:
+                        await status_msg.edit_text("❌ Fayl juda katta (100 MB dan oshadi).")
                     cleanup_files(path)
+                else:
+                    await status_msg.edit_text(
+                        f"❌ Kechirasiz, '{text}' qo'shig'i topilmadi.\n\n"
+                        "💡 **Maslahat:** Qo'shiq nomini to'g'ri yozganingizga ishonch hosil qiling."
+                    )
+            except Exception as e:
+                logger.error(f"Single song search error: {e}")
+                await status_msg.edit_text("❌ Xatolik yuz berdi. Iltimos, qayta urinib ko'ring.")
+        
+        else:
+            # ============================================
+            # IJROCHI NOMI - 10 ta qo'shiq
+            # ============================================
+            limit = 10
+            status_msg = await message.answer(f"🔍 '{text}' ijrochisining eng sara {limit} ta qo'shig'i qidirilmoqda...")
+            
+            try:
+                # YouTube'dan bir nechta audiolarni yuklash
+                results = await download_batch_youtube_audio(text, limit=limit)
                 
-                await status_msg.edit_text(f"✅ Tayyor! {len(results)} ta qo'shiq yuborildi.")
-            else:
-                await status_msg.edit_text(
-                    f"❌ Kechirasiz, '{text}' bo'yicha qo'shiqlar topilmadi.\n\n"
-                    "💡 **Maslahat:** Ismni to'g'ri yozganingizga ishonch hosil qiling."
-                )
-                
-        except Exception as e:
-            logger.error(f"Batch search handler error: {e}")
-            await status_msg.edit_text("❌ Xatolik yuz berdi. Iltimos, qayta urinib ko'ring.")
+                if results:
+                    await status_msg.edit_text(f"🎵 {len(results)} ta qo'shiq topildi. Yuborilmoqda...")
+                    
+                    for path, title, artist in results:
+                        try:
+                            audio_size = get_file_size_mb(path)
+                            if audio_size <= 100:
+                                await message.answer_audio(
+                                    FSInputFile(path),
+                                    title=title,
+                                    performer=artist,
+                                    caption=f"✅ {artist} - {title}"
+                                )
+                        except Exception as send_err:
+                            logger.error(f"Error sending batch audio: {send_err}")
+                        
+                        # Har bir faylni yuborgandan so'ng o'chirish (joy tejash uchun)
+                        cleanup_files(path)
+                    
+                    await status_msg.edit_text(f"✅ Tayyor! {len(results)} ta qo'shiq yuborildi.")
+                else:
+                    await status_msg.edit_text(
+                        f"❌ Kechirasiz, '{text}' bo'yicha qo'shiqlar topilmadi.\n\n"
+                        "💡 **Maslahat:** Ismni to'g'ri yozganingizga ishonch hosil qiling."
+                    )
+                    
+            except Exception as e:
+                logger.error(f"Batch search handler error: {e}")
+                await status_msg.edit_text("❌ Xatolik yuz berdi. Iltimos, qayta urinib ko'ring.")
 
 
 

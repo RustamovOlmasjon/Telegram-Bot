@@ -1,0 +1,27 @@
+# 2-masala: Kvadratning yuzasini hisoblash
+
+def kvadrat_yuzasi(tomon):
+    """
+    Kvadratning tomonini qabul qilib, yuzasini qaytaradi.
+    
+    Args:
+        tomon: Kvadratning tomon uzunligi
+    
+    Returns:
+        Kvadratning yuzasi (tomon * tomon)
+    """
+    return tomon * tomon
+
+
+# Funksiyani sinash
+if __name__ == "__main__":
+    # Misol: tomon = 5 bo'lsa
+    tomon = 5
+    yuza = kvadrat_yuzasi(tomon)
+    print(f"Kvadratning tomoni: {tomon}")
+    print(f"Kvadratning yuzasi: {yuza}")
+    
+    # Boshqa misollar
+    print(f"\nTomon: 3 -> Yuza: {kvadrat_yuzasi(3)}")
+    print(f"Tomon: 7 -> Yuza: {kvadrat_yuzasi(7)}")
+    print(f"Tomon: 10 -> Yuza: {kvadrat_yuzasi(10)}")
